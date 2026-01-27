@@ -31,6 +31,7 @@ def construct_ui():
             keys = [
                 "project_dir", "model_arch", "vram_size", "comfy_models_dir",
                 "resolution_w", "resolution_h", "batch_size",
+                "control_directory", "control_resolution_w", "control_resolution_h", "no_resize_control",
                 "vae_path", "text_encoder1_path", "text_encoder2_path",
                 "dit_path", "output_name", "dim", "lr", "optimizer_type", "optimizer_args", "lr_scheduler", "lr_scheduler_args",
                 "network_alpha", "lr_warmup_steps", "seed", "max_grad_norm",
@@ -50,18 +51,19 @@ def construct_ui():
 
     def load_preset(name):
         if not name:
-            return [gr.update()] * 41 # Return no updates
+            return [gr.update()] * 45 # Return no updates
         try:
             path = os.path.join(PRESETS_DIR, f"{name}.json")
             if not os.path.exists(path):
-                return [gr.update()] * 41
+                return [gr.update()] * 45
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             
             # Return values in order. Use get with defaults.
             return [
-                data.get("project_dir", ""), data.get("model_arch", "Qwen-Image"), data.get("vram_size", "24"), data.get("comfy_models_dir", ""),
+                data.get("project_dir", ""), data.get("model_arch", "Flux.2 Klein (4B)"), data.get("vram_size", "24"), data.get("comfy_models_dir", ""),
                 data.get("resolution_w", 1024), data.get("resolution_h", 1024), data.get("batch_size", 1),
+                data.get("control_directory", ""), data.get("control_resolution_w", 0), data.get("control_resolution_h", 0), data.get("no_resize_control", False),
                 data.get("vae_path", ""), data.get("text_encoder1_path", ""), data.get("text_encoder2_path", ""),
                 data.get("dit_path", ""), data.get("output_name", "my_lora"), data.get("dim", 32), data.get("lr", 1e-4),
                 data.get("optimizer_type", "adamw8bit"), data.get("optimizer_args", ""),
@@ -76,10 +78,65 @@ def construct_ui():
         except Exception as e:
              # In case of error, just don't update anything or handle gracefully
              print(f"Error loading preset: {e}")
-             return [gr.update()] * 41
+             return [gr.update()] * 45
 
     def refresh_preset_dropdown():
         return gr.update(choices=get_preset_list())
+
+    def _safe_initial_dir(path):
+        if not path:
+            return None
+        if os.path.isdir(path):
+            return path
+        if os.path.isfile(path):
+            return os.path.dirname(path)
+        parent = os.path.dirname(path)
+        return parent if parent and os.path.exists(parent) else None
+
+    def browse_file(current_path):
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            initialdir = _safe_initial_dir(current_path)
+            filename = filedialog.askopenfilename(initialdir=initialdir)
+            root.destroy()
+            return filename if filename else gr.update()
+        except Exception as e:
+            return gr.update()
+
+    def browse_dir(current_path):
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            initialdir = _safe_initial_dir(current_path)
+            dirname = filedialog.askdirectory(initialdir=initialdir)
+            root.destroy()
+            return dirname if dirname else gr.update()
+        except Exception:
+            return gr.update()
+
+    def browse_save(current_path):
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            initialdir = _safe_initial_dir(current_path)
+            filename = filedialog.asksaveasfilename(initialdir=initialdir)
+            root.destroy()
+            return filename if filename else gr.update()
+        except Exception:
+            return gr.update()
 
     def launch_tensorboard(project_dir):
         if not project_dir or not os.path.exists(project_dir):
@@ -117,7 +174,8 @@ def construct_ui():
         with gr.Accordion(i18n("acc_project"), open=True):
             gr.Markdown(i18n("desc_project"))
             with gr.Row():
-                project_dir = gr.Textbox(label=i18n("lbl_proj_dir"), placeholder=i18n("ph_proj_dir"), max_lines=1)
+                project_dir = gr.Textbox(label=i18n("lbl_proj_dir"), placeholder=i18n("ph_proj_dir"), max_lines=1, scale=8)
+                browse_project_dir = gr.Button(i18n("btn_browse"), scale=1)
 
             # Placeholder for project initialization or loading
             init_btn = gr.Button(i18n("btn_init_project"))
@@ -129,17 +187,19 @@ def construct_ui():
                 model_arch = gr.Dropdown(
                     label=i18n("lbl_model_arch"),
                     choices=[
+                        "Flux.2 Klein (4B)",
+                        "Flux.2 Klein Base (4B)",
+                        "Flux.2 Dev",
                         "Qwen-Image",
                         "Z-Image-Turbo",
-                        "Flux.2 Dev",
-                        "Flux.2 Klein (4B)",
                     ],
-                    value="Qwen-Image",
+                    value="Flux.2 Klein (4B)",
                 )
                 vram_size = gr.Dropdown(label=i18n("lbl_vram"), choices=["12", "16", "24", "32", ">32"], value="24")
 
             with gr.Row():
-                comfy_models_dir = gr.Textbox(label=i18n("lbl_comfy_dir"), placeholder=i18n("ph_comfy_dir"), max_lines=1)
+                comfy_models_dir = gr.Textbox(label=i18n("lbl_comfy_dir"), placeholder=i18n("ph_comfy_dir"), max_lines=1, scale=8)
+                browse_comfy_dir = gr.Button(i18n("btn_browse"), scale=1)
 
             # Validation for ComfyUI models directory
             models_status = gr.Markdown("")
@@ -154,6 +214,16 @@ def construct_ui():
                 resolution_w = gr.Number(label=i18n("lbl_res_w"), value=1024, precision=0)
                 resolution_h = gr.Number(label=i18n("lbl_res_h"), value=1024, precision=0)
                 batch_size = gr.Number(label=i18n("lbl_batch_size"), value=1, precision=0)
+
+            gr.Markdown(i18n("header_control"))
+            gr.Markdown(i18n("desc_control"))
+            with gr.Row():
+                control_directory = gr.Textbox(label=i18n("lbl_control_dir"), placeholder=i18n("ph_control_dir"), max_lines=1, scale=8)
+                browse_control_dir = gr.Button(i18n("btn_browse"), scale=1)
+            with gr.Row():
+                control_res_w = gr.Number(label=i18n("lbl_control_res_w"), value=0, precision=0)
+                control_res_h = gr.Number(label=i18n("lbl_control_res_h"), value=0, precision=0)
+                no_resize_control = gr.Checkbox(label=i18n("lbl_no_resize_control"), value=False)
 
             gen_toml_btn = gr.Button(i18n("btn_gen_config"))
             dataset_status = gr.Markdown("")
@@ -230,18 +300,35 @@ def construct_ui():
                         gr.update(),
                         gr.update(),
                         gr.update(),
+                        gr.update(),
+                        gr.update(),
+                        gr.update(),
+                        gr.update(),
+                        gr.update(),
+                        gr.update(),
+                        gr.update(),
+                        gr.update(),
+                        gr.update(),
+                        gr.update(),
+                        gr.update(),
+                        gr.update(),
+                        gr.update(),
                     )
                 try:
                     os.makedirs(os.path.join(path, "training"), exist_ok=True)
 
                     # Load settings if available
                     settings = load_project_settings(path)
-                    new_model = settings.get("model_arch", "Qwen-Image")
+                    new_model = settings.get("model_arch", "Flux.2 Klein (4B)")
                     new_vram = settings.get("vram_size", "16")
                     new_comfy = settings.get("comfy_models_dir", "")
-                    new_w = settings.get("resolution_w", 1328)
-                    new_h = settings.get("resolution_h", 1328)
+                    new_w = settings.get("resolution_w", 1024)
+                    new_h = settings.get("resolution_h", 1024)
                     new_batch = settings.get("batch_size", 1)
+                    new_control_dir = settings.get("control_directory", "")
+                    new_control_w = settings.get("control_resolution_w", 0)
+                    new_control_h = settings.get("control_resolution_h", 0)
+                    new_no_resize_control = settings.get("no_resize_control", False)
                     new_vae = settings.get("vae_path", "")
                     new_te1 = settings.get("text_encoder1_path", "")
                     new_te2 = settings.get("text_encoder2_path", "")
@@ -303,6 +390,10 @@ def construct_ui():
                         new_w,
                         new_h,
                         new_batch,
+                        new_control_dir,
+                        new_control_w,
+                        new_control_h,
+                        new_no_resize_control,
                         preview_content,
                         new_vae,
                         new_te1,
@@ -385,9 +476,26 @@ def construct_ui():
                         gr.update(),
                         gr.update(),
                         gr.update(),
+                        gr.update(),
+                        gr.update(),
                     )
 
-            def generate_config(project_path, w, h, batch, model_val, vram_val, comfy_val, vae_val, te1_val, te2_val):
+            def generate_config(
+                project_path,
+                w,
+                h,
+                batch,
+                model_val,
+                vram_val,
+                comfy_val,
+                vae_val,
+                te1_val,
+                te2_val,
+                control_dir,
+                control_w,
+                control_h,
+                no_resize_ctrl,
+            ):
                 if not project_path:
                     return "Error: Project directory not specified.\nエラー: プロジェクトディレクトリが指定されていません。", ""
 
@@ -403,6 +511,10 @@ def construct_ui():
                     vae_path=vae_val,
                     text_encoder1_path=te1_val,
                     text_encoder2_path=te2_val,
+                    control_directory=control_dir,
+                    control_resolution_w=control_w,
+                    control_resolution_h=control_h,
+                    no_resize_control=no_resize_ctrl,
                 )
 
                 # Normalize paths
@@ -424,6 +536,20 @@ image_directory = "{image_dir}"
 cache_directory = "{cache_dir}"
 num_repeats = 1
 """
+                control_dir = (control_dir or "").strip()
+                if control_dir:
+                    safe_control_dir = control_dir.replace("\\", "/")
+                    toml_content += f'control_directory = "{safe_control_dir}"\n'
+                    if no_resize_ctrl:
+                        toml_content += "no_resize_control = true\n"
+                    try:
+                        control_w_int = int(control_w)
+                        control_h_int = int(control_h)
+                    except Exception:
+                        control_w_int = 0
+                        control_h_int = 0
+                    if control_w_int > 0 and control_h_int > 0:
+                        toml_content += f"control_resolution = [{control_w_int}, {control_h_int}]\n"
                 try:
                     config_path = os.path.join(project_path, "dataset_config.toml")
                     with open(config_path, "w", encoding="utf-8") as f:
@@ -436,10 +562,17 @@ num_repeats = 1
             gr.Markdown(i18n("desc_preprocessing"))
             with gr.Row():
                 set_preprocessing_defaults_btn = gr.Button(i18n("btn_set_paths"))
+                auto_detect_paths_btn = gr.Button(i18n("btn_auto_detect_paths"))
+            auto_detect_status = gr.Markdown("")
             with gr.Row():
-                vae_path = gr.Textbox(label=i18n("lbl_vae_path"), placeholder=i18n("ph_vae_path"), max_lines=1)
-                text_encoder1_path = gr.Textbox(label=i18n("lbl_te1_path"), placeholder=i18n("ph_te1_path"), max_lines=1)
-                text_encoder2_path = gr.Textbox(label=i18n("lbl_te2_path"), placeholder=i18n("ph_te2_path"), max_lines=1)
+                vae_path = gr.Textbox(label=i18n("lbl_vae_path"), placeholder=i18n("ph_vae_path"), max_lines=1, scale=8)
+                browse_vae = gr.Button(i18n("btn_browse"), scale=1)
+            with gr.Row():
+                text_encoder1_path = gr.Textbox(label=i18n("lbl_te1_path"), placeholder=i18n("ph_te1_path"), max_lines=1, scale=8)
+                browse_te1 = gr.Button(i18n("btn_browse"), scale=1)
+            with gr.Row():
+                text_encoder2_path = gr.Textbox(label=i18n("lbl_te2_path"), placeholder=i18n("ph_te2_path"), max_lines=1, scale=8)
+                browse_te2 = gr.Button(i18n("btn_browse"), scale=1)
 
             with gr.Row():
                 cache_latents_btn = gr.Button(i18n("btn_cache_latents"))
@@ -478,6 +611,9 @@ num_repeats = 1
                 vae_default, te1_default, te2_default = config_manager.get_preprocessing_paths(model_arch, comfy_models_dir)
                 if not te2_default:
                     te2_default = ""  # Ensure empty string for text input
+                if model_arch.startswith("Flux.2") and te1_default and not os.path.exists(te1_default):
+                    # Flux.2 text encoder weights are often split; avoid auto-filling a bad path.
+                    te1_default = ""
 
                 if project_path:
                     save_project_settings(
@@ -486,10 +622,137 @@ num_repeats = 1
 
                 return vae_default, te1_default, te2_default
 
+            def auto_detect_paths(project_path, comfy_models_dir, model_arch):
+                if not comfy_models_dir:
+                    return gr.update(), gr.update(), gr.update(), gr.update(), i18n("msg_auto_detect_fail").format(
+                        e="ComfyUI models directory not set"
+                    )
+
+                base_dir = os.path.abspath(comfy_models_dir)
+                diffusion_dir = os.path.join(base_dir, "diffusion_models")
+                vae_dir = os.path.join(base_dir, "vae")
+                te_dir = os.path.join(base_dir, "text_encoders")
+
+                def find_first(search_dir, patterns):
+                    if not search_dir or not os.path.exists(search_dir):
+                        return ""
+                    for pattern in patterns:
+                        matches = glob.glob(os.path.join(search_dir, pattern))
+                        matches.sort()
+                        if matches:
+                            return matches[0]
+                    return ""
+
+                if model_arch == "Flux.2 Dev":
+                    dit_patterns = ["flux2-dev.safetensors", "flux2_dev.safetensors", "*flux2*dev*.safetensors"]
+                    vae_patterns = ["ae.safetensors"]
+                    te_patterns = [
+                        "*mistral*00001-of-*.safetensors",
+                        "*mistral*00001*.safetensors",
+                        "*mistral*.safetensors",
+                        "*00001-of-*.safetensors",
+                    ]
+                elif model_arch == "Flux.2 Klein (4B)":
+                    dit_patterns = [
+                        "flux2-klein-4b.safetensors",
+                        "flux2_klein_4b.safetensors",
+                        "*flux2*klein*4b*.safetensors",
+                    ]
+                    vae_patterns = ["ae.safetensors"]
+                    te_patterns = [
+                        "qwen_3_4b.safetensors",
+                        "*qwen*3*4b*00001-of-*.safetensors",
+                        "*qwen*3*4b*.safetensors",
+                        "*qwen*4b*00001-of-*.safetensors",
+                        "*qwen*4b*.safetensors",
+                    ]
+                elif model_arch == "Flux.2 Klein Base (4B)":
+                    dit_patterns = [
+                        "flux2-klein-base-4b.safetensors",
+                        "flux2_klein_base_4b.safetensors",
+                        "*flux2*klein*base*4b*.safetensors",
+                    ]
+                    vae_patterns = ["ae.safetensors"]
+                    te_patterns = [
+                        "qwen_3_4b.safetensors",
+                        "*qwen*3*4b*00001-of-*.safetensors",
+                        "*qwen*3*4b*.safetensors",
+                        "*qwen*4b*00001-of-*.safetensors",
+                        "*qwen*4b*.safetensors",
+                    ]
+                elif model_arch == "Qwen-Image":
+                    dit_patterns = ["qwen_image_bf16.safetensors", "*qwen*image*bf16*.safetensors"]
+                    vae_patterns = ["qwen_image_vae.safetensors", "*qwen*image*vae*.safetensors"]
+                    te_patterns = ["qwen_2.5_vl_7b.safetensors", "*qwen*2.5*vl*7b*.safetensors", "*qwen*vl*7b*.safetensors"]
+                else:  # Z-Image-Turbo (default)
+                    dit_patterns = ["z_image_de_turbo_v1_bf16.safetensors", "*z*image*de*turbo*bf16*.safetensors"]
+                    vae_patterns = ["ae.safetensors"]
+                    te_patterns = ["qwen_3_4b.safetensors", "*qwen*3*4b*.safetensors"]
+
+                vae_found = find_first(vae_dir, vae_patterns)
+                te1_found = find_first(te_dir, te_patterns)
+                dit_found = find_first(diffusion_dir, dit_patterns)
+
+                # Save settings if project path is provided
+                if project_path:
+                    updates = {}
+                    if vae_found:
+                        updates["vae_path"] = vae_found
+                    if te1_found:
+                        updates["text_encoder1_path"] = te1_found
+                    if dit_found:
+                        updates["dit_path"] = dit_found
+                    if updates:
+                        save_project_settings(project_path, **updates)
+
+                # Build status message
+                label_vae = i18n("lbl_vae_path")
+                label_te1 = i18n("lbl_te1_path")
+                label_dit = i18n("lbl_dit_path")
+
+                found_lines = []
+                missing_labels = []
+                if vae_found:
+                    found_lines.append(f"- **{label_vae}**: `{vae_found}`")
+                else:
+                    missing_labels.append(label_vae)
+                if te1_found:
+                    found_lines.append(f"- **{label_te1}**: `{te1_found}`")
+                else:
+                    missing_labels.append(label_te1)
+                if dit_found:
+                    found_lines.append(f"- **{label_dit}**: `{dit_found}`")
+                else:
+                    missing_labels.append(label_dit)
+
+                lines = [f"**{i18n('msg_auto_detect_title')}**"]
+                if found_lines:
+                    lines.append(f"{i18n('msg_auto_detect_found')}:")
+                    lines.extend(found_lines)
+                if missing_labels:
+                    lines.append(f"{i18n('msg_auto_detect_missing')}: {', '.join(missing_labels)}")
+                if model_arch.startswith("Flux.2") and not te1_found:
+                    lines.append(i18n("msg_auto_detect_note_split"))
+
+                status_msg = "\n".join(lines)
+
+                return (
+                    gr.update(value=vae_found) if vae_found else gr.update(),
+                    gr.update(value=te1_found) if te1_found else gr.update(),
+                    gr.update(),
+                    gr.update(value=dit_found) if dit_found else gr.update(),
+                    status_msg,
+                )
+
             def set_training_defaults(project_path, comfy_models_dir, model_arch, vram_val):
                 # Get number of images from project_path to adjust num_epochs later
                 cache_dir = os.path.join(project_path, "cache")
-                pattern = "*" + ("_qi" if model_arch == "Qwen-Image" else "_zi") + ".safetensors"
+                if model_arch == "Qwen-Image":
+                    pattern = "*_qwen_image*.safetensors"
+                elif model_arch.startswith("Flux.2"):
+                    pattern = "*_flux_2*.safetensors"
+                else:
+                    pattern = "*_z_image*.safetensors"
                 num_images = len(glob.glob(os.path.join(cache_dir, pattern))) if os.path.exists(cache_dir) else 0
 
                 # Get training defaults from config manager
@@ -556,7 +819,6 @@ num_repeats = 1
                 return (
                     dit_default,
                     dim,
-                    dim,
                     lr,
                     optimizer_type,
                     optimizer_args,
@@ -577,6 +839,79 @@ num_repeats = 1
                     sample_w_default,
                     sample_h_default,
                     sample_out,
+                )
+
+            def estimate_vram(
+                model_arch,
+                w,
+                h,
+                batch,
+                prec,
+                grad_cp,
+                fp8_s,
+                fp8_l,
+                swap,
+            ):
+                try:
+                    w = int(w)
+                    h = int(h)
+                    batch = int(batch)
+                except Exception:
+                    return i18n("msg_est_vram_note")
+
+                if w <= 0 or h <= 0 or batch <= 0:
+                    return i18n("msg_est_vram_note")
+
+                base_map = {
+                    "Z-Image-Turbo": 8.0,
+                    "Qwen-Image": 18.0,
+                    "Flux.2 Dev": 18.0,
+                    "Flux.2 Klein (4B)": 12.0,
+                    "Flux.2 Klein Base (4B)": 14.0,
+                }
+                base_vram = base_map.get(model_arch, 12.0)
+
+                scale = (w * h) / (1024 * 1024) * max(1, batch)
+                vram = base_vram * scale
+
+                if prec == "no":
+                    vram *= 1.6
+                elif prec == "fp16":
+                    vram *= 0.95
+
+                if grad_cp:
+                    vram *= 0.85
+
+                if fp8_s:
+                    vram *= 0.85
+
+                if fp8_l:
+                    vram *= 0.9
+
+                try:
+                    swap_val = int(swap)
+                except Exception:
+                    swap_val = 0
+
+                if swap_val > 0:
+                    max_swap_map = {
+                        "Z-Image-Turbo": 28,
+                        "Qwen-Image": 58,
+                        "Flux.2 Dev": 29,
+                        "Flux.2 Klein (4B)": 13,
+                        "Flux.2 Klein Base (4B)": 13,
+                    }
+                    max_swap = max_swap_map.get(model_arch, 30)
+                    swap_ratio = min(1.0, swap_val / max_swap)
+                    vram *= (1.0 - 0.4 * swap_ratio)
+
+                vram = max(1.0, vram)
+                low = vram * 0.8
+                high = vram * 1.2
+
+                return (
+                    f"**{i18n('msg_est_vram_title')}**: ~{low:.1f}–{high:.1f} GB\n\n"
+                    f"{i18n('msg_est_vram_note')}"
                 )
 
             def set_post_processing_defaults(project_path, output_nm):
@@ -674,13 +1009,17 @@ num_repeats = 1
                     cmd.extend(["--model_version", "dev"])
                 elif model == "Flux.2 Klein (4B)":
                     cmd.extend(["--model_version", "klein-4b"])
+                elif model == "Flux.2 Klein Base (4B)":
+                    cmd.extend(["--model_version", "klein-base-4b"])
 
                 command_str = " ".join(cmd)
                 yield f"Starting Latent Caching. Please wait for the first log to appear. / Latentのキャッシュを開始します。最初のログが表示されるまでにしばらくかかります。\nCommand: {command_str}\n\n"
 
                 yield from run_command(command_str)
 
-            def cache_text_encoder(project_path, te1_path_val, te2_path_val, vae, model, comfy, w, h, batch, vram_val):
+            def cache_text_encoder(
+                project_path, te1_path_val, te2_path_val, vae, model, comfy, w, h, batch, vram_val, fp8_text_encoder
+            ):
                 if not project_path:
                     yield "Error: Project directory not set. / プロジェクトディレクトリが設定されていません。"
                     return
@@ -743,6 +1082,11 @@ num_repeats = 1
                     cmd.extend(["--model_version", "dev"])
                 elif model == "Flux.2 Klein (4B)":
                     cmd.extend(["--model_version", "klein-4b"])
+                elif model == "Flux.2 Klein Base (4B)":
+                    cmd.extend(["--model_version", "klein-base-4b"])
+
+                if model.startswith("Flux.2") and model != "Flux.2 Dev" and fp8_text_encoder:
+                    cmd.append("--fp8_text_encoder")
 
                 command_str = " ".join(cmd)
                 yield f"Starting Text Encoder Caching. Please wait for the first log to appear. / Text Encoderのキャッシュを開始します。最初のログが表示されるまでにしばらくかかります。\nCommand: {command_str}\n\n"
@@ -751,12 +1095,13 @@ num_repeats = 1
 
         with gr.Accordion(i18n("acc_training"), open=False):
             gr.Markdown(i18n("desc_training_basic"))
-            training_model_info = gr.Markdown(i18n("desc_training_zimage"))
+            training_model_info = gr.Markdown(i18n("desc_training_flux2"))
 
             with gr.Row():
                 set_training_defaults_btn = gr.Button(i18n("btn_rec_params"))
             with gr.Row():
-                dit_path = gr.Textbox(label=i18n("lbl_dit_path"), placeholder=i18n("ph_dit_path"), max_lines=1)
+                dit_path = gr.Textbox(label=i18n("lbl_dit_path"), placeholder=i18n("ph_dit_path"), max_lines=1, scale=8)
+                browse_dit = gr.Button(i18n("btn_browse"), scale=1)
 
             with gr.Row():
                 output_name = gr.Textbox(label=i18n("lbl_output_name"), value="my_lora", max_lines=1)
@@ -801,7 +1146,7 @@ num_repeats = 1
 
             with gr.Group():
                 with gr.Row():
-                    discrete_flow_shift = gr.Number(label=i18n("lbl_flow_shift"), value=2.0)
+                    discrete_flow_shift = gr.Number(label=i18n("lbl_flow_shift"), value=1.0)
                     block_swap = gr.Slider(label=i18n("lbl_block_swap"), minimum=0, maximum=60, step=1, value=0)
                     use_pinned_memory_for_block_swap = gr.Checkbox(
                         label=i18n("lbl_use_pinned_memory_for_block_swap"),
@@ -818,6 +1163,10 @@ num_repeats = 1
                 with gr.Row():
                     fp8_scaled = gr.Checkbox(label=i18n("lbl_fp8_scaled"), value=True)
                     fp8_llm = gr.Checkbox(label=i18n("lbl_fp8_llm"), value=True)
+
+            with gr.Row():
+                est_vram_btn = gr.Button(i18n("btn_est_vram"))
+            vram_estimate = gr.Markdown("")
 
             with gr.Group():
                 gr.Markdown(i18n("header_sample_images"))
@@ -838,13 +1187,15 @@ num_repeats = 1
                         label=i18n("lbl_sample_output_dir"),
                         placeholder=i18n("ph_sample_output_dir"),
                     )
+                    browse_sample_out = gr.Button(i18n("btn_browse"), scale=1)
 
             with gr.Accordion(i18n("accordion_additional"), open=False):
                 gr.Markdown(i18n("desc_additional_args"))
                 additional_args = gr.Textbox(label=i18n("lbl_additional_args"), placeholder=i18n("ph_additional_args"))
 
             with gr.Row():
-                resume_path = gr.Textbox(label=i18n("lbl_resume"), placeholder=i18n("ph_resume"))
+                resume_path = gr.Textbox(label=i18n("lbl_resume"), placeholder=i18n("ph_resume"), scale=8)
+                browse_resume = gr.Button(i18n("btn_browse"), scale=1)
 
             training_status = gr.Markdown("")
             with gr.Row():
@@ -856,8 +1207,11 @@ num_repeats = 1
             with gr.Row():
                 set_post_proc_defaults_btn = gr.Button(i18n("btn_set_paths"))
             with gr.Row():
-                input_lora = gr.Textbox(label=i18n("lbl_input_lora"), placeholder=i18n("ph_input_lora"), max_lines=1)
-                output_comfy_lora = gr.Textbox(label=i18n("lbl_output_comfy"), placeholder=i18n("ph_output_comfy"), max_lines=1)
+                input_lora = gr.Textbox(label=i18n("lbl_input_lora"), placeholder=i18n("ph_input_lora"), max_lines=1, scale=8)
+                browse_input_lora = gr.Button(i18n("btn_browse"), scale=1)
+            with gr.Row():
+                output_comfy_lora = gr.Textbox(label=i18n("lbl_output_comfy"), placeholder=i18n("ph_output_comfy"), max_lines=1, scale=8)
+                browse_output_lora = gr.Button(i18n("btn_browse"), scale=1)
 
             convert_btn = gr.Button(i18n("btn_convert"))
             conversion_log = gr.Textbox(label=i18n("lbl_conversion_log"), lines=5, interactive=False)
@@ -1040,6 +1394,10 @@ num_repeats = 1
                  inner_cmd.extend(["--model_version", "dev"])
             elif model == "Flux.2 Klein (4B)":
                  inner_cmd.extend(["--model_version", "klein-4b"])
+            elif model == "Flux.2 Klein Base (4B)":
+                 inner_cmd.extend(["--model_version", "klein-base-4b"])
+
+            timestep_sampling = "flux2_shift" if model.startswith("Flux.2") else "shift"
 
             inner_cmd.extend([
                 "--dit",
@@ -1077,7 +1435,7 @@ num_repeats = 1
                 "--save_every_n_epochs",
                 str(int(save_n)),
                 "--timestep_sampling",
-                "shift",
+                timestep_sampling,
                 "--weighting_scheme",
                 "none",
                 "--discrete_flow_shift",
@@ -1085,8 +1443,6 @@ num_repeats = 1
                 "--max_data_loader_n_workers",
                 "2",
                 "--persistent_data_loader_workers",
-                "--seed",
-                "42",
                 "--logging_dir",
                 logging_dir,
                 "--log_with",
@@ -1114,6 +1470,10 @@ num_repeats = 1
                     # prompt, negative prompt, width, height, flow shift, steps, CFG scale, seed
                     "Qwen-Image": "{prompt} --n {neg} --w {w} --h {h} --fs 2.2 --s 20 --l 4.0 --d 1234",
                     "Z-Image-Turbo": "{prompt} --n {neg} --w {w} --h {h} --fs 3.0 --s 20 --l 5.0 --d 1234",
+                    # Flux.2 uses guidance scale; distilled klein uses fewer steps
+                    "Flux.2 Dev": "{prompt} --n {neg} --w {w} --h {h} --s 50 --g 4.0 --d 1234",
+                    "Flux.2 Klein (4B)": "{prompt} --n {neg} --w {w} --h {h} --s 4 --g 1.0 --d 1234",
+                    "Flux.2 Klein Base (4B)": "{prompt} --n {neg} --w {w} --h {h} --s 50 --g 4.0 --d 1234",
                 }
                 template = templates.get(model, templates["Z-Image-Turbo"])
                 prompt_str = (sample_prompt_val or "").replace("\n", " ").strip()
@@ -1158,6 +1518,8 @@ num_repeats = 1
                     inner_cmd.append("--fp8_llm")
                 elif model == "Qwen-Image":
                     inner_cmd.append("--fp8_vl")
+                elif model.startswith("Flux.2") and model != "Flux.2 Dev":
+                    inner_cmd.append("--fp8_text_encoder")
 
             if swap > 0:
                 inner_cmd.extend(["--blocks_to_swap", str(int(swap))])
@@ -1222,6 +1584,10 @@ num_repeats = 1
                 resolution_w,
                 resolution_h,
                 batch_size,
+                control_directory,
+                control_res_w,
+                control_res_h,
+                no_resize_control,
                 toml_preview,
                 vae_path,
                 text_encoder1_path,
@@ -1275,11 +1641,29 @@ num_repeats = 1
                 vae_path,
                 text_encoder1_path,
                 text_encoder2_path,
+                control_directory,
+                control_res_w,
+                control_res_h,
+                no_resize_control,
             ],
             outputs=[dataset_status, toml_preview],
         )
 
         validate_models_btn.click(fn=validate_models_dir, inputs=[comfy_models_dir], outputs=[models_status])
+
+        browse_project_dir.click(fn=browse_dir, inputs=[project_dir], outputs=[project_dir])
+        browse_comfy_dir.click(fn=browse_dir, inputs=[comfy_models_dir], outputs=[comfy_models_dir])
+        browse_control_dir.click(fn=browse_dir, inputs=[control_directory], outputs=[control_directory])
+
+        browse_vae.click(fn=browse_file, inputs=[vae_path], outputs=[vae_path])
+        browse_te1.click(fn=browse_file, inputs=[text_encoder1_path], outputs=[text_encoder1_path])
+        browse_te2.click(fn=browse_file, inputs=[text_encoder2_path], outputs=[text_encoder2_path])
+        browse_dit.click(fn=browse_file, inputs=[dit_path], outputs=[dit_path])
+
+        browse_sample_out.click(fn=browse_dir, inputs=[sample_output_dir], outputs=[sample_output_dir])
+        browse_resume.click(fn=browse_dir, inputs=[resume_path], outputs=[resume_path])
+        browse_input_lora.click(fn=browse_file, inputs=[input_lora], outputs=[input_lora])
+        browse_output_lora.click(fn=browse_save, inputs=[output_comfy_lora], outputs=[output_comfy_lora])
 
         set_rec_settings_btn.click(
             fn=set_recommended_settings,
@@ -1291,6 +1675,12 @@ num_repeats = 1
             fn=set_preprocessing_defaults,
             inputs=[project_dir, comfy_models_dir, model_arch],
             outputs=[vae_path, text_encoder1_path, text_encoder2_path],
+        )
+
+        auto_detect_paths_btn.click(
+            fn=auto_detect_paths,
+            inputs=[project_dir, comfy_models_dir, model_arch],
+            outputs=[vae_path, text_encoder1_path, text_encoder2_path, dit_path, auto_detect_status],
         )
 
         set_post_proc_defaults_btn.click(
@@ -1326,6 +1716,22 @@ num_repeats = 1
             ],
         )
 
+        est_vram_btn.click(
+            fn=estimate_vram,
+            inputs=[
+                model_arch,
+                resolution_w,
+                resolution_h,
+                batch_size,
+                mixed_precision,
+                gradient_checkpointing,
+                fp8_scaled,
+                fp8_llm,
+                block_swap,
+            ],
+            outputs=[vram_estimate],
+        )
+
         cache_latents_btn.click(
             fn=cache_latents,
             inputs=[
@@ -1356,6 +1762,7 @@ num_repeats = 1
                 resolution_h,
                 batch_size,
                 vram_size,
+                fp8_llm,
             ],
             outputs=[caching_output],
         )
@@ -1409,6 +1816,7 @@ num_repeats = 1
                 preset_name,
                 project_dir, model_arch, vram_size, comfy_models_dir,
                 resolution_w, resolution_h, batch_size,
+                control_directory, control_res_w, control_res_h, no_resize_control,
                 vae_path, text_encoder1_path, text_encoder2_path,
                 dit_path, output_name, network_dim, learning_rate, optimizer_type, optimizer_args, lr_scheduler, lr_scheduler_args,
                 network_alpha, lr_warmup_steps, seed, max_grad_norm,
@@ -1430,6 +1838,7 @@ num_repeats = 1
              outputs=[
                 project_dir, model_arch, vram_size, comfy_models_dir,
                 resolution_w, resolution_h, batch_size,
+                control_directory, control_res_w, control_res_h, no_resize_control,
                 vae_path, text_encoder1_path, text_encoder2_path,
                 dit_path, output_name, network_dim, learning_rate, optimizer_type, optimizer_args, lr_scheduler, lr_scheduler_args,
                 network_alpha, lr_warmup_steps, seed, max_grad_norm,

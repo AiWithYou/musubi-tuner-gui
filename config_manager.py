@@ -55,11 +55,13 @@ class ConfigManager:
             "Flux.2 Dev": {
                 "resolution": (1024, 1024),
                 "vae_subpath": ["vae", "ae.safetensors"],
-                "te1_subpath": ["text_encoders", "mistral_v3.safetensors"],
+                # Text encoder for dev is split; leave empty to avoid wrong default.
+                "te1_subpath": None,
                 "te2_subpath": None,
-                "dit_subpath": ["diffusion_models", "flux2_dev.safetensors"],
+                "dit_subpath": ["diffusion_models", "flux2-dev.safetensors"],
                 "training_base": {
-                    "learning_rate": 1e-3,
+                    "learning_rate": 1e-4,
+                    "network_dim": 32,
                     "default_num_steps": 1000,
                     "save_every_n_epochs": 1,
                     # Flux 2 doesn't use discrete flow shift in the same way or uses None defaults often, 
@@ -68,10 +70,10 @@ class ConfigManager:
                     "mixed_precision": "bf16",
                     "gradient_checkpointing": True,
                     "fp8_scaled": True,
-                    "fp8_llm": False,  # Mistral might not support fp8 llm in this repo yet easily
+                    "fp8_llm": False,  # Mistral uses fp8_text_encoder; keep disabled by default
                 },
                 "vram_settings": {
-                    "12": {"batch_size": 1, "block_swap": 20, "fp8_scaled": True, "fp8_llm": True},
+                    "12": {"batch_size": 1, "block_swap": 20, "fp8_scaled": True, "fp8_llm": False},
                     "16": {"batch_size": 1, "block_swap": 10, "fp8_scaled": True, "fp8_llm": False},
                     "24": {"batch_size": 1, "block_swap": 0, "fp8_scaled": True, "fp8_llm": False},
                     "32": {"batch_size": 1, "block_swap": 0, "fp8_scaled": False, "fp8_llm": False},
@@ -81,11 +83,12 @@ class ConfigManager:
             "Flux.2 Klein (4B)": {
                 "resolution": (1024, 1024),
                 "vae_subpath": ["vae", "ae.safetensors"],
-                "te1_subpath": ["text_encoders", "qwen3_4b.safetensors"],
+                "te1_subpath": ["text_encoders", "qwen_3_4b.safetensors"],
                 "te2_subpath": None,
-                "dit_subpath": ["diffusion_models", "flux2_klein.safetensors"],
+                "dit_subpath": ["diffusion_models", "flux2-klein-4b.safetensors"],
                 "training_base": {
-                    "learning_rate": 1e-3,
+                    "learning_rate": 1e-4,
+                    "network_dim": 32,
                     "default_num_steps": 1000,
                     "save_every_n_epochs": 1,
                     "discrete_flow_shift": 1.0,
@@ -98,6 +101,33 @@ class ConfigManager:
                     "12": {"batch_size": 1, "block_swap": 10, "fp8_scaled": True, "fp8_llm": True},
                     "16": {"batch_size": 1, "block_swap": 0, "fp8_scaled": True, "fp8_llm": False},
                     "24": {"batch_size": 2, "block_swap": 0, "fp8_scaled": True, "fp8_llm": False},
+                    "32": {"batch_size": 2, "block_swap": 0, "fp8_scaled": False, "fp8_llm": False},
+                    ">32": {"batch_size": 2, "block_swap": 0, "fp8_scaled": False, "fp8_llm": False},
+                },
+            },
+            "Flux.2 Klein Base (4B)": {
+                "resolution": (1024, 1024),
+                "vae_subpath": ["vae", "ae.safetensors"],
+                "te1_subpath": ["text_encoders", "qwen_3_4b.safetensors"],
+                "te2_subpath": None,
+                "dit_subpath": ["diffusion_models", "flux2-klein-base-4b.safetensors"],
+                "training_base": {
+                    "learning_rate": 1e-4,
+                    "network_dim": 32,
+                    "default_num_steps": 1000,
+                    "save_every_n_epochs": 1,
+                    "discrete_flow_shift": 1.0,
+                    "mixed_precision": "bf16",
+                    "gradient_checkpointing": True,
+                    "fp8_scaled": True,
+                    "fp8_llm": False,
+                },
+                "vram_settings": {
+                    "12": {"batch_size": 1, "block_swap": 10, "fp8_scaled": True, "fp8_llm": True},
+                    "16": {"batch_size": 1, "block_swap": 0, "fp8_scaled": True, "fp8_llm": False},
+                    "24": {"batch_size": 2, "block_swap": 0, "fp8_scaled": True, "fp8_llm": False},
+                    "32": {"batch_size": 2, "block_swap": 0, "fp8_scaled": False, "fp8_llm": False},
+                    ">32": {"batch_size": 2, "block_swap": 0, "fp8_scaled": False, "fp8_llm": False},
                 },
             },
         }
