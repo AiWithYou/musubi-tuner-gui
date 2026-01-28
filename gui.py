@@ -1,6 +1,8 @@
 import glob
 import gradio as gr
+import inspect
 import os
+import warnings
 import toml
 import subprocess
 import sys
@@ -14,11 +16,152 @@ config_manager = ConfigManager()
 
 i18n = gr.I18n(en=I18N_DATA["en"], ja=I18N_DATA["ja"])
 
+try:
+    _launch_params = inspect.signature(gr.Blocks.launch).parameters
+except (ValueError, TypeError):
+    _launch_params = {}
+
+LAUNCH_SUPPORTS_THEME = "theme" in _launch_params
+LAUNCH_SUPPORTS_CSS = "css" in _launch_params
+
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message="The 'theme' parameter in the Blocks constructor will be removed in Gradio 6.0.*",
+)
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message="The 'css' parameter in the Blocks constructor will be removed in Gradio 6.0.*",
+)
+
+APP_CSS = """
+@import url("https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap");
+
+:root {
+  --bg-1: #f6f2ea;
+  --bg-2: #e9f2ff;
+  --card: #ffffff;
+  --ink: #1f2937;
+  --muted: #6b7280;
+  --accent: #0f766e;
+  --border: #e5e7eb;
+  --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+}
+
+.gradio-container {
+  font-family: "Sora", "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+  background: radial-gradient(1200px 600px at 90% -20%, var(--bg-2), transparent),
+              radial-gradient(1000px 500px at -10% 0%, #fbeee3, transparent),
+              linear-gradient(180deg, #f9fafb 0%, #f3f4f6 100%);
+  color: var(--ink);
+}
+
+#app-header h1 {
+  letter-spacing: -0.02em;
+  font-weight: 700;
+}
+
+#app-desc {
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+.section-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  box-shadow: var(--shadow);
+}
+
+.gr-button {
+  border-radius: 10px;
+}
+
+.gr-button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.path-row {
+  align-items: flex-end;
+}
+
+.subtle-note {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+"""
 
 def construct_ui():
     # --- Preset Management ---
     PRESETS_DIR = os.path.join(os.path.dirname(__file__), "presets")
     os.makedirs(PRESETS_DIR, exist_ok=True)
+
+    def ensure_default_presets():
+        zimage_vram = "24"
+        zimage_resolution = config_manager.get_resolution("Z-Image-Turbo")
+        zimage_batch = config_manager.get_batch_size("Z-Image-Turbo", zimage_vram)
+        zimage_defaults = config_manager.get_training_defaults("Z-Image-Turbo", zimage_vram, "")
+
+        preset = {
+            "project_dir": "",
+            "model_arch": "Z-Image-Turbo",
+            "vram_size": zimage_vram,
+            "comfy_models_dir": "",
+            "resolution_w": zimage_resolution[0],
+            "resolution_h": zimage_resolution[1],
+            "batch_size": zimage_batch,
+            "control_directory": "",
+            "control_resolution_w": 0,
+            "control_resolution_h": 0,
+            "no_resize_control": False,
+            "vae_path": "",
+            "text_encoder1_path": "",
+            "text_encoder2_path": "",
+            "dit_path": zimage_defaults.get("dit_path", ""),
+            "output_name": "zimage_lora",
+            "dim": zimage_defaults.get("network_dim", 4),
+            "lr": zimage_defaults.get("learning_rate", 1e-3),
+            "optimizer_type": zimage_defaults.get("optimizer_type", "adamw8bit"),
+            "optimizer_args": zimage_defaults.get("optimizer_args", ""),
+            "lr_scheduler": "constant",
+            "lr_scheduler_args": "",
+            "network_alpha": zimage_defaults.get("network_alpha", 1),
+            "lr_warmup_steps": zimage_defaults.get("lr_warmup_steps", 0),
+            "seed": zimage_defaults.get("seed", 42),
+            "max_grad_norm": zimage_defaults.get("max_grad_norm", 1.0),
+            "epochs": 16,
+            "save_every": zimage_defaults.get("save_every_n_epochs", 1),
+            "flow_shift": zimage_defaults.get("discrete_flow_shift", 2.0),
+            "block_swap": zimage_defaults.get("block_swap", 0),
+            "pinned": zimage_defaults.get("use_pinned_memory_for_block_swap", False),
+            "mixed_precision": zimage_defaults.get("mixed_precision", "bf16"),
+            "grad_checkpointing": zimage_defaults.get("gradient_checkpointing", True),
+            "fp8_scaled": zimage_defaults.get("fp8_scaled", True),
+            "fp8_llm": zimage_defaults.get("fp8_llm", False),
+            "additional_args": "",
+            "sample_images": False,
+            "sample_every": 1,
+            "sample_output_dir": "",
+            "sample_prompt": "",
+            "sample_neg": "",
+            "sample_w": zimage_resolution[0],
+            "sample_h": zimage_resolution[1],
+            "input_lora": "",
+            "output_comfy": "",
+        }
+
+        defaults = {"Z-Image (default)": preset}
+        for name, data in defaults.items():
+            path = os.path.join(PRESETS_DIR, f"{name}.json")
+            if not os.path.exists(path):
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=4)
+
+    ensure_default_presets()
+    initial_fp8_llm = config_manager.get_training_defaults("Flux.2 Klein (4B)", "24", "").get("fp8_llm", False)
 
     def get_preset_list():
         return [os.path.splitext(os.path.basename(f))[0] for f in glob.glob(os.path.join(PRESETS_DIR, "*.json"))]
@@ -61,7 +204,7 @@ def construct_ui():
             
             # Return values in order. Use get with defaults.
             return [
-                data.get("project_dir", ""), data.get("model_arch", "Flux.2 Klein (4B)"), data.get("vram_size", "24"), data.get("comfy_models_dir", ""),
+                gr.update(), data.get("model_arch", "Flux.2 Klein (4B)"), data.get("vram_size", "24"), data.get("comfy_models_dir", ""),
                 data.get("resolution_w", 1024), data.get("resolution_h", 1024), data.get("batch_size", 1),
                 data.get("control_directory", ""), data.get("control_resolution_w", 0), data.get("control_resolution_h", 0), data.get("no_resize_control", False),
                 data.get("vae_path", ""), data.get("text_encoder1_path", ""), data.get("text_encoder2_path", ""),
@@ -156,12 +299,18 @@ def construct_ui():
     # --- UI Construction ---
     # I18N doesn't work for gr.Blocks title
     # with gr.Blocks(title=i18n("app_title")) as demo:
-    with gr.Blocks(title="Musubi Tuner GUI") as demo:
-        gr.Markdown(i18n("app_header"))
-        gr.Markdown(i18n("app_desc"))
+    block_kwargs = {"title": "Musubi Tuner GUI"}
+    if not LAUNCH_SUPPORTS_THEME:
+        block_kwargs["theme"] = gr.themes.Soft()
+    if not LAUNCH_SUPPORTS_CSS:
+        block_kwargs["css"] = APP_CSS
+
+    with gr.Blocks(**block_kwargs) as demo:
+        gr.Markdown(i18n("app_header"), elem_id="app-header")
+        gr.Markdown(i18n("app_desc"), elem_id="app-desc")
 
         # Presets Section
-        with gr.Accordion(i18n("header_presets"), open=False):
+        with gr.Accordion(i18n("header_presets"), open=False, elem_classes=["section-card"]):
             with gr.Row():
                 preset_name = gr.Textbox(label=i18n("lbl_preset_name"), scale=2)
                 save_preset_btn = gr.Button(i18n("btn_save_preset"), scale=1)
@@ -171,9 +320,9 @@ def construct_ui():
                 refresh_preset_btn = gr.Button(i18n("btn_refresh_presets"), scale=0)
             preset_status = gr.Markdown("")
 
-        with gr.Accordion(i18n("acc_project"), open=True):
+        with gr.Accordion(i18n("acc_project"), open=True, elem_classes=["section-card"]):
             gr.Markdown(i18n("desc_project"))
-            with gr.Row():
+            with gr.Row(elem_classes=["path-row"]):
                 project_dir = gr.Textbox(label=i18n("lbl_proj_dir"), placeholder=i18n("ph_proj_dir"), max_lines=1, scale=8)
                 browse_project_dir = gr.Button(i18n("btn_browse"), scale=1)
 
@@ -181,7 +330,7 @@ def construct_ui():
             init_btn = gr.Button(i18n("btn_init_project"))
             project_status = gr.Markdown("")
 
-        with gr.Accordion(i18n("acc_model"), open=False):
+        with gr.Accordion(i18n("acc_model"), open=False, elem_classes=["section-card"]):
             gr.Markdown(i18n("desc_model"))
             with gr.Row():
                 model_arch = gr.Dropdown(
@@ -197,13 +346,20 @@ def construct_ui():
                 )
                 vram_size = gr.Dropdown(label=i18n("lbl_vram"), choices=["12", "16", "24", "32", ">32"], value="24")
 
-            with gr.Row():
+            with gr.Row(elem_classes=["path-row"]):
                 comfy_models_dir = gr.Textbox(label=i18n("lbl_comfy_dir"), placeholder=i18n("ph_comfy_dir"), max_lines=1, scale=8)
                 browse_comfy_dir = gr.Button(i18n("btn_browse"), scale=1)
 
             # Validation for ComfyUI models directory
             models_status = gr.Markdown("")
             validate_models_btn = gr.Button(i18n("btn_validate_models"))
+
+            gr.Markdown(i18n("header_quick_actions"))
+            with gr.Row():
+                quick_setup_btn = gr.Button(i18n("btn_quick_setup"), variant="primary")
+                check_missing_btn = gr.Button(i18n("btn_check_missing"))
+            quick_status = gr.Markdown("", elem_classes=["subtle-note"])
+
 
             # Placeholder for Dataset Settings (Step 3)
             gr.Markdown(i18n("header_dataset"))
@@ -217,7 +373,7 @@ def construct_ui():
 
             gr.Markdown(i18n("header_control"))
             gr.Markdown(i18n("desc_control"))
-            with gr.Row():
+            with gr.Row(elem_classes=["path-row"]):
                 control_directory = gr.Textbox(label=i18n("lbl_control_dir"), placeholder=i18n("ph_control_dir"), max_lines=1, scale=8)
                 browse_control_dir = gr.Button(i18n("btn_browse"), scale=1)
             with gr.Row():
@@ -354,7 +510,7 @@ def construct_ui():
                     new_prec = settings.get("mixed_precision", "bf16")
                     new_grad_cp = settings.get("gradient_checkpointing", True)
                     new_fp8_s = settings.get("fp8_scaled", True)
-                    new_fp8_l = settings.get("fp8_llm", True)
+                    new_fp8_l = settings.get("fp8_llm", False)
                     new_add_args = settings.get("additional_args", "")
 
                     # Sample image params
@@ -558,19 +714,19 @@ num_repeats = 1
                 except Exception as e:
                     return f"Error generating config / 設定ファイルの生成に失敗しました: {str(e)}", ""
 
-        with gr.Accordion(i18n("acc_preprocessing"), open=False):
+        with gr.Accordion(i18n("acc_preprocessing"), open=False, elem_classes=["section-card"]):
             gr.Markdown(i18n("desc_preprocessing"))
             with gr.Row():
                 set_preprocessing_defaults_btn = gr.Button(i18n("btn_set_paths"))
                 auto_detect_paths_btn = gr.Button(i18n("btn_auto_detect_paths"))
             auto_detect_status = gr.Markdown("")
-            with gr.Row():
+            with gr.Row(elem_classes=["path-row"]):
                 vae_path = gr.Textbox(label=i18n("lbl_vae_path"), placeholder=i18n("ph_vae_path"), max_lines=1, scale=8)
                 browse_vae = gr.Button(i18n("btn_browse"), scale=1)
-            with gr.Row():
+            with gr.Row(elem_classes=["path-row"]):
                 text_encoder1_path = gr.Textbox(label=i18n("lbl_te1_path"), placeholder=i18n("ph_te1_path"), max_lines=1, scale=8)
                 browse_te1 = gr.Button(i18n("btn_browse"), scale=1)
-            with gr.Row():
+            with gr.Row(elem_classes=["path-row"]):
                 text_encoder2_path = gr.Textbox(label=i18n("lbl_te2_path"), placeholder=i18n("ph_te2_path"), max_lines=1, scale=8)
                 browse_te2 = gr.Button(i18n("btn_browse"), scale=1)
 
@@ -650,7 +806,6 @@ num_repeats = 1
                         "*mistral*00001-of-*.safetensors",
                         "*mistral*00001*.safetensors",
                         "*mistral*.safetensors",
-                        "*00001-of-*.safetensors",
                     ]
                 elif model_arch == "Flux.2 Klein (4B)":
                     dit_patterns = [
@@ -748,12 +903,17 @@ num_repeats = 1
                 # Get number of images from project_path to adjust num_epochs later
                 cache_dir = os.path.join(project_path, "cache")
                 if model_arch == "Qwen-Image":
-                    pattern = "*_qwen_image*.safetensors"
+                    arch_tag = "qwen_image"
                 elif model_arch.startswith("Flux.2"):
-                    pattern = "*_flux_2*.safetensors"
+                    arch_tag = "flux_2"
                 else:
-                    pattern = "*_z_image*.safetensors"
-                num_images = len(glob.glob(os.path.join(cache_dir, pattern))) if os.path.exists(cache_dir) else 0
+                    arch_tag = "z_image"
+                if os.path.exists(cache_dir):
+                    all_files = glob.glob(os.path.join(cache_dir, f"*_{arch_tag}*.safetensors"))
+                    latent_files = [f for f in all_files if not f.endswith("_te.safetensors")]
+                    num_images = len(latent_files)
+                else:
+                    num_images = 0
 
                 # Get training defaults from config manager
                 defaults = config_manager.get_training_defaults(model_arch, vram_val, comfy_models_dir)
@@ -783,7 +943,7 @@ num_repeats = 1
                 prec = defaults.get("mixed_precision", "bf16")
                 grad_cp = defaults.get("gradient_checkpointing", True)
                 fp8_s = defaults.get("fp8_scaled", True)
-                fp8_l = defaults.get("fp8_llm", True)
+                fp8_l = defaults.get("fp8_llm", False)
 
                 sample_w_default, sample_h_default = config_manager.get_resolution(model_arch)
                 sample_out = "" # Default empty
@@ -913,6 +1073,118 @@ num_repeats = 1
                     f"**{i18n('msg_est_vram_title')}**: ~{low:.1f}–{high:.1f} GB\n\n"
                     f"{i18n('msg_est_vram_note')}"
                 )
+
+            def _prefer_auto(auto_val, fallback):
+                if isinstance(auto_val, dict):
+                    if auto_val.get("value"):
+                        return auto_val
+                    return fallback
+                if isinstance(auto_val, str) and auto_val:
+                    return auto_val
+                return fallback
+
+            def quick_setup(project_path, model_arch, vram_val, comfy_models_dir):
+                w, h, batch = set_recommended_settings(project_path, model_arch, vram_val)
+
+                vae_default, te1_default, te2_default = set_preprocessing_defaults(project_path, comfy_models_dir, model_arch)
+                (
+                    dit_default,
+                    dim,
+                    lr,
+                    optimizer_type,
+                    optimizer_args,
+                    network_alpha,
+                    lr_warmup_steps,
+                    seed,
+                    max_grad_norm,
+                    epochs,
+                    save_n,
+                    flow,
+                    swap,
+                    use_pinned_memory_for_block_swap,
+                    prec,
+                    grad_cp,
+                    fp8_s,
+                    fp8_l,
+                    sample_every_n_epochs,
+                    sample_w_default,
+                    sample_h_default,
+                    sample_out,
+                ) = set_training_defaults(project_path, comfy_models_dir, model_arch, vram_val)
+
+                auto_vae = gr.update()
+                auto_te1 = gr.update()
+                auto_te2 = gr.update()
+                auto_dit = gr.update()
+                auto_status = ""
+                if comfy_models_dir:
+                    auto_vae, auto_te1, auto_te2, auto_dit, auto_status = auto_detect_paths(
+                        project_path, comfy_models_dir, model_arch
+                    )
+
+                status_msg = i18n("msg_quick_setup_done")
+                if auto_status:
+                    status_msg = f"{status_msg}\n\n{auto_status}"
+
+                return (
+                    w,
+                    h,
+                    batch,
+                    _prefer_auto(auto_vae, vae_default),
+                    _prefer_auto(auto_te1, te1_default),
+                    _prefer_auto(auto_te2, te2_default),
+                    _prefer_auto(auto_dit, dit_default),
+                    dim,
+                    lr,
+                    optimizer_type,
+                    optimizer_args,
+                    network_alpha,
+                    lr_warmup_steps,
+                    seed,
+                    max_grad_norm,
+                    epochs,
+                    save_n,
+                    flow,
+                    swap,
+                    use_pinned_memory_for_block_swap,
+                    prec,
+                    grad_cp,
+                    fp8_s,
+                    fp8_l,
+                    sample_every_n_epochs,
+                    sample_w_default,
+                    sample_h_default,
+                    sample_out,
+                    update_model_info(model_arch),
+                    status_msg,
+                )
+
+            def check_missing(
+                project_path,
+                comfy_models_dir,
+                vae_val,
+                te1_val,
+                dit_val,
+            ):
+                missing = []
+                if not project_path:
+                    missing.append(i18n("lbl_proj_dir"))
+                else:
+                    config_path = os.path.join(project_path, "dataset_config.toml")
+                    if not os.path.exists(config_path):
+                        missing.append("dataset_config.toml")
+                if not comfy_models_dir:
+                    missing.append(i18n("lbl_comfy_dir"))
+                if not vae_val:
+                    missing.append(i18n("lbl_vae_path"))
+                if not te1_val:
+                    missing.append(i18n("lbl_te1_path"))
+                if not dit_val:
+                    missing.append(i18n("lbl_dit_path"))
+
+                if missing:
+                    return f"**{i18n('msg_missing_title')}**\n- " + "\n- ".join(missing)
+                return "OK"
 
             def set_post_processing_defaults(project_path, output_nm):
                 if not project_path or not output_nm:
@@ -1093,13 +1365,13 @@ num_repeats = 1
 
                 yield from run_command(command_str)
 
-        with gr.Accordion(i18n("acc_training"), open=False):
+        with gr.Accordion(i18n("acc_training"), open=False, elem_classes=["section-card"]):
             gr.Markdown(i18n("desc_training_basic"))
             training_model_info = gr.Markdown(i18n("desc_training_flux2"))
 
             with gr.Row():
                 set_training_defaults_btn = gr.Button(i18n("btn_rec_params"))
-            with gr.Row():
+            with gr.Row(elem_classes=["path-row"]):
                 dit_path = gr.Textbox(label=i18n("lbl_dit_path"), placeholder=i18n("ph_dit_path"), max_lines=1, scale=8)
                 browse_dit = gr.Button(i18n("btn_browse"), scale=1)
 
@@ -1162,7 +1434,7 @@ num_repeats = 1
 
                 with gr.Row():
                     fp8_scaled = gr.Checkbox(label=i18n("lbl_fp8_scaled"), value=True)
-                    fp8_llm = gr.Checkbox(label=i18n("lbl_fp8_llm"), value=True)
+                    fp8_llm = gr.Checkbox(label=i18n("lbl_fp8_llm"), value=initial_fp8_llm)
 
             with gr.Row():
                 est_vram_btn = gr.Button(i18n("btn_est_vram"))
@@ -1182,10 +1454,11 @@ num_repeats = 1
                     sample_w = gr.Number(label=i18n("lbl_sample_w"), value=1024, precision=0)
                     sample_h = gr.Number(label=i18n("lbl_sample_h"), value=1024, precision=0)
                     sample_every_n = gr.Number(label=i18n("lbl_sample_every_n"), value=1, precision=0)
-                with gr.Row():
+                with gr.Row(elem_classes=["path-row"]):
                     sample_output_dir = gr.Textbox(
                         label=i18n("lbl_sample_output_dir"),
                         placeholder=i18n("ph_sample_output_dir"),
+                        scale=8,
                     )
                     browse_sample_out = gr.Button(i18n("btn_browse"), scale=1)
 
@@ -1193,7 +1466,7 @@ num_repeats = 1
                 gr.Markdown(i18n("desc_additional_args"))
                 additional_args = gr.Textbox(label=i18n("lbl_additional_args"), placeholder=i18n("ph_additional_args"))
 
-            with gr.Row():
+            with gr.Row(elem_classes=["path-row"]):
                 resume_path = gr.Textbox(label=i18n("lbl_resume"), placeholder=i18n("ph_resume"), scale=8)
                 browse_resume = gr.Button(i18n("btn_browse"), scale=1)
 
@@ -1202,14 +1475,14 @@ num_repeats = 1
                 start_training_btn = gr.Button(i18n("btn_start_training"), variant="primary", scale=2)
                 tensorboard_btn = gr.Button(i18n("btn_tensorboard"), scale=1)
 
-        with gr.Accordion(i18n("acc_post_processing"), open=False):
+        with gr.Accordion(i18n("acc_post_processing"), open=False, elem_classes=["section-card"]):
             gr.Markdown(i18n("desc_post_proc"))
             with gr.Row():
                 set_post_proc_defaults_btn = gr.Button(i18n("btn_set_paths"))
-            with gr.Row():
+            with gr.Row(elem_classes=["path-row"]):
                 input_lora = gr.Textbox(label=i18n("lbl_input_lora"), placeholder=i18n("ph_input_lora"), max_lines=1, scale=8)
                 browse_input_lora = gr.Button(i18n("btn_browse"), scale=1)
-            with gr.Row():
+            with gr.Row(elem_classes=["path-row"]):
                 output_comfy_lora = gr.Textbox(label=i18n("lbl_output_comfy"), placeholder=i18n("ph_output_comfy"), max_lines=1, scale=8)
                 browse_output_lora = gr.Button(i18n("btn_browse"), scale=1)
 
@@ -1651,6 +1924,49 @@ num_repeats = 1
 
         validate_models_btn.click(fn=validate_models_dir, inputs=[comfy_models_dir], outputs=[models_status])
 
+        quick_setup_btn.click(
+            fn=quick_setup,
+            inputs=[project_dir, model_arch, vram_size, comfy_models_dir],
+            outputs=[
+                resolution_w,
+                resolution_h,
+                batch_size,
+                vae_path,
+                text_encoder1_path,
+                text_encoder2_path,
+                dit_path,
+                network_dim,
+                learning_rate,
+                optimizer_type,
+                optimizer_args,
+                network_alpha,
+                lr_warmup_steps,
+                seed,
+                max_grad_norm,
+                num_epochs,
+                save_every_n_epochs,
+                discrete_flow_shift,
+                block_swap,
+                use_pinned_memory_for_block_swap,
+                mixed_precision,
+                gradient_checkpointing,
+                fp8_scaled,
+                fp8_llm,
+                sample_every_n,
+                sample_w,
+                sample_h,
+                sample_output_dir,
+                training_model_info,
+                quick_status,
+            ],
+        )
+
+        check_missing_btn.click(
+            fn=check_missing,
+            inputs=[project_dir, comfy_models_dir, vae_path, text_encoder1_path, dit_path],
+            outputs=[quick_status],
+        )
+
         browse_project_dir.click(fn=browse_dir, inputs=[project_dir], outputs=[project_dir])
         browse_comfy_dir.click(fn=browse_dir, inputs=[comfy_models_dir], outputs=[comfy_models_dir])
         browse_control_dir.click(fn=browse_dir, inputs=[control_directory], outputs=[control_directory])
@@ -1878,4 +2194,9 @@ num_repeats = 1
 
 if __name__ == "__main__":
     demo = construct_ui()
-    demo.launch(i18n=i18n)
+    launch_kwargs = {"i18n": i18n}
+    if LAUNCH_SUPPORTS_THEME:
+        launch_kwargs["theme"] = gr.themes.Soft()
+    if LAUNCH_SUPPORTS_CSS:
+        launch_kwargs["css"] = APP_CSS
+    demo.launch(**launch_kwargs)
