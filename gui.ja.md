@@ -2,7 +2,7 @@
 
 # Musubi Tuner GUI - ユーザーガイド
 
-このガイドでは、Musubi Tuner GUIのセットアップと使用方法について説明します。Z-Image-TurboやQwen-Imageなどの画像生成モデルでLoRAを学習できます。
+このガイドでは、Musubi Tuner GUIのセットアップと使用方法について説明します。Z-ImageやQwen-Imageなどの画像生成モデルでLoRAを学習できます。
 
 ## 目次
 
@@ -185,7 +185,7 @@ my_lora_project/
 ### ステップ2：モデル選択
 
 1. **Model Architecture（モデルアーキテクチャ）**：学習したいモデルを選択
-   - `Z-Image-Turbo` - 高速な学習、BaseモデルがリリースされていないためLoRA学習がやや不安定
+   - `Z-Image` - 高速な学習（低ステップ）で試行に向きます
    - `Qwen-Image` - より高品質、VRAMをより多く使用
 
 2. **VRAM Size（VRAMサイズ）**：GPUのVRAMサイズを選択
@@ -279,7 +279,7 @@ Z-ImageのLoRAは、ComfyUIで使用するために変換が必要です。以�
 
 ## 使用するモデル一覧
 
-### Z-Image-Turbo
+### Z-Image
 
 text-encodersとvaeモデルファイルは、[こちら](https://huggingface.co/Comfy-Org/z_image_turbo) の `split_files` 以下の適切なディレクトリからダウンロードしてください。
 
@@ -313,7 +313,7 @@ text-encodersとvaeモデルファイルは、[こちら](https://huggingface.co
 
 | 項目 | 説明 |
 |------|------|
-| Model Architecture | LoRAを学習するベースモデル。Z-Image-Turboは高速、Qwen-Imageはより高品質。 |
+| Model Architecture | LoRAを学習するベースモデル。Z-Imageは高速、Qwen-Imageはより高品質。 |
 | VRAM Size | GPUのビデオメモリ。推奨バッチサイズやメモリ最適化設定に影響します。 |
 | ComfyUI Models Directory | 必要なモデルファイルが含まれるComfyUIの`models`フォルダへのパス。 |
 

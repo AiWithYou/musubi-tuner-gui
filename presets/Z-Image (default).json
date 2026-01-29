@@ -1,6 +1,6 @@
 {
     "project_dir": "",
-    "model_arch": "Z-Image-Turbo",
+    "model_arch": "Z-Image",
     "vram_size": "24",
     "comfy_models_dir": "",
     "resolution_w": 1024,

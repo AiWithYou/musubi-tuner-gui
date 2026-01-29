@@ -1,6 +1,6 @@
 {
     "project_dir": "",
-    "model_arch": "Flux.2 Klein (4B)",
+    "model_arch": "Flux.2 Klein Base (4B)",
     "vram_size": "24",
     "comfy_models_dir": "H:\\AI\\Antigravity1\\comfyui\\models",
     "resolution_w": 1024,
@@ -33,10 +33,15 @@
     "additional_args": "",
     "sample_images": true,
     "sample_every": 1,
-    "sample_output_dir": "1girl, looking at viewer, smile",
-    "sample_prompt": "",
-    "sample_neg": 1024,
+    "sample_output_dir": "",
+    "sample_prompt": "1girl, looking at viewer, smile",
+    "sample_neg": "",
     "sample_w": 1024,
-    "sample_h": "",
-    "input_lora": ""
+    "sample_h": 1024,
+    "input_lora": "",
+    "control_directory": "",
+    "control_resolution_w": 0,
+    "control_resolution_h": 0,
+    "no_resize_control": false,
+    "output_comfy": ""
 }

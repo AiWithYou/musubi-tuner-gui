@@ -2,7 +2,7 @@
 
 # Musubi Tuner GUI - User Guide
 
-This guide will help you set up and use the Musubi Tuner GUI for training LoRA models with image generation architectures like Z-Image-Turbo and Qwen-Image.
+This guide will help you set up and use the Musubi Tuner GUI for training LoRA models with image generation architectures like Z-Image and Qwen-Image.
 
 ## Table of Contents
 
@@ -185,7 +185,7 @@ my_lora_project/
 ### Step 2: Model Selection
 
 1. **Model Architecture**: Select the model you want to train
-   - `Z-Image-Turbo` - Faster training; LoRA training may be slightly unstable because the Base model is not released yet
+   - `Z-Image` - Faster training (lower steps); good for quick experiments
    - `Qwen-Image` - Higher quality, requires more VRAM
 
 2. **VRAM Size**: Select your GPU's VRAM size
@@ -279,7 +279,7 @@ Z-Image LoRAs need to be converted for use in ComfyUI. Follow these steps:
 
 ## Required Model Files
 
-### Z-Image-Turbo
+### Z-Image
 
 For text encoder and VAE model files, download them from the appropriate directory under `split_files` here: https://huggingface.co/Comfy-Org/z_image_turbo
 
@@ -313,7 +313,7 @@ Download the required model files from the appropriate directory under `split_fi
 
 | Field | Description |
 |-------|-------------|
-| Model Architecture | The base model to train a LoRA for. Z-Image-Turbo is faster; Qwen-Image produces higher quality. |
+| Model Architecture | The base model to train a LoRA for. Z-Image is faster; Qwen-Image produces higher quality. |
 | VRAM Size | Your GPU's video memory. Affects recommended batch size and memory optimization settings. |
 | ComfyUI Models Directory | Path to ComfyUI's `models` folder containing the required model files. |
 

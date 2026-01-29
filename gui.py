@@ -1,6 +1,7 @@
 import glob
 import gradio as gr
 import inspect
+import locale
 import os
 import warnings
 import toml
@@ -99,15 +100,21 @@ def construct_ui():
     PRESETS_DIR = os.path.join(os.path.dirname(__file__), "presets")
     os.makedirs(PRESETS_DIR, exist_ok=True)
 
+    def _normalize_model_label(model_name):
+        return "Z-Image" if model_name == "Z-Image-Turbo" else model_name
+
+    def _is_zimage(model_name):
+        return _normalize_model_label(model_name) == "Z-Image"
+
     def ensure_default_presets():
         zimage_vram = "24"
-        zimage_resolution = config_manager.get_resolution("Z-Image-Turbo")
-        zimage_batch = config_manager.get_batch_size("Z-Image-Turbo", zimage_vram)
-        zimage_defaults = config_manager.get_training_defaults("Z-Image-Turbo", zimage_vram, "")
+        zimage_resolution = config_manager.get_resolution("Z-Image")
+        zimage_batch = config_manager.get_batch_size("Z-Image", zimage_vram)
+        zimage_defaults = config_manager.get_training_defaults("Z-Image", zimage_vram, "")
 
         preset = {
             "project_dir": "",
-            "model_arch": "Z-Image-Turbo",
+            "model_arch": "Z-Image",
             "vram_size": zimage_vram,
             "comfy_models_dir": "",
             "resolution_w": zimage_resolution[0],
@@ -117,6 +124,12 @@ def construct_ui():
             "control_resolution_w": 0,
             "control_resolution_h": 0,
             "no_resize_control": False,
+            "image_directory": "",
+            "cache_directory": "",
+            "caption_extension": ".txt",
+            "num_repeats": 1,
+            "enable_bucket": True,
+            "bucket_no_upscale": False,
             "vae_path": "",
             "text_encoder1_path": "",
             "text_encoder2_path": "",
@@ -175,6 +188,7 @@ def construct_ui():
                 "project_dir", "model_arch", "vram_size", "comfy_models_dir",
                 "resolution_w", "resolution_h", "batch_size",
                 "control_directory", "control_resolution_w", "control_resolution_h", "no_resize_control",
+                "image_directory", "cache_directory", "caption_extension", "num_repeats", "enable_bucket", "bucket_no_upscale",
                 "vae_path", "text_encoder1_path", "text_encoder2_path",
                 "dit_path", "output_name", "dim", "lr", "optimizer_type", "optimizer_args", "lr_scheduler", "lr_scheduler_args",
                 "network_alpha", "lr_warmup_steps", "seed", "max_grad_norm",
@@ -194,19 +208,22 @@ def construct_ui():
 
     def load_preset(name):
         if not name:
-            return [gr.update()] * 45 # Return no updates
+            return [gr.update()] * 51 # Return no updates
         try:
             path = os.path.join(PRESETS_DIR, f"{name}.json")
             if not os.path.exists(path):
-                return [gr.update()] * 45
+                return [gr.update()] * 51
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             
             # Return values in order. Use get with defaults.
+            model_val = _normalize_model_label(data.get("model_arch", "Flux.2 Klein (4B)"))
             return [
-                gr.update(), data.get("model_arch", "Flux.2 Klein (4B)"), data.get("vram_size", "24"), data.get("comfy_models_dir", ""),
+                gr.update(), model_val, data.get("vram_size", "24"), data.get("comfy_models_dir", ""),
                 data.get("resolution_w", 1024), data.get("resolution_h", 1024), data.get("batch_size", 1),
                 data.get("control_directory", ""), data.get("control_resolution_w", 0), data.get("control_resolution_h", 0), data.get("no_resize_control", False),
+                data.get("image_directory", ""), data.get("cache_directory", ""), data.get("caption_extension", ".txt"), data.get("num_repeats", 1),
+                data.get("enable_bucket", True), data.get("bucket_no_upscale", False),
                 data.get("vae_path", ""), data.get("text_encoder1_path", ""), data.get("text_encoder2_path", ""),
                 data.get("dit_path", ""), data.get("output_name", "my_lora"), data.get("dim", 32), data.get("lr", 1e-4),
                 data.get("optimizer_type", "adamw8bit"), data.get("optimizer_args", ""),
@@ -221,7 +238,7 @@ def construct_ui():
         except Exception as e:
              # In case of error, just don't update anything or handle gracefully
              print(f"Error loading preset: {e}")
-             return [gr.update()] * 45
+             return [gr.update()] * 51
 
     def refresh_preset_dropdown():
         return gr.update(choices=get_preset_list())
@@ -340,7 +357,7 @@ def construct_ui():
                         "Flux.2 Klein Base (4B)",
                         "Flux.2 Dev",
                         "Qwen-Image",
-                        "Z-Image-Turbo",
+                        "Z-Image",
                     ],
                     value="Flux.2 Klein (4B)",
                 )
@@ -380,6 +397,21 @@ def construct_ui():
                 control_res_w = gr.Number(label=i18n("lbl_control_res_w"), value=0, precision=0)
                 control_res_h = gr.Number(label=i18n("lbl_control_res_h"), value=0, precision=0)
                 no_resize_control = gr.Checkbox(label=i18n("lbl_no_resize_control"), value=False)
+
+            gr.Markdown(i18n("header_dataset_details"))
+            gr.Markdown(i18n("desc_dataset_details"))
+            with gr.Row(elem_classes=["path-row"]):
+                image_directory = gr.Textbox(label=i18n("lbl_image_dir"), placeholder=i18n("ph_image_dir"), max_lines=1, scale=8)
+                browse_image_dir = gr.Button(i18n("btn_browse"), scale=1)
+            with gr.Row(elem_classes=["path-row"]):
+                cache_directory = gr.Textbox(label=i18n("lbl_cache_dir"), placeholder=i18n("ph_cache_dir"), max_lines=1, scale=8)
+                browse_cache_dir = gr.Button(i18n("btn_browse"), scale=1)
+            with gr.Row():
+                caption_extension = gr.Textbox(label=i18n("lbl_caption_ext"), value=".txt", max_lines=1)
+                num_repeats = gr.Number(label=i18n("lbl_num_repeats"), value=1, precision=0)
+            with gr.Row():
+                enable_bucket = gr.Checkbox(label=i18n("lbl_enable_bucket"), value=True)
+                bucket_no_upscale = gr.Checkbox(label=i18n("lbl_bucket_no_upscale"), value=False)
 
             gen_toml_btn = gr.Button(i18n("btn_gen_config"))
             dataset_status = gr.Markdown("")
@@ -422,60 +454,21 @@ def construct_ui():
 
             def init_project(path):
                 if not path:
-                    return (
-                        "Please enter a project directory path.",
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                    )
+                    return ("Please enter a project directory path.",) + tuple(gr.update() for _ in range(51))
                 try:
                     os.makedirs(os.path.join(path, "training"), exist_ok=True)
 
                     # Load settings if available
                     settings = load_project_settings(path)
-                    new_model = settings.get("model_arch", "Flux.2 Klein (4B)")
+                    if not settings:
+                        preview_content = load_dataset_config_content(path)
+                        msg = f"Project initialized at {path}. No saved settings found; keeping current values."
+                        msg += "\n\nプロジェクトが初期化されました。保存された設定がないため、現在の入力を保持します。"
+                        updates = [gr.update()] * 51
+                        if preview_content:
+                            updates[16] = preview_content
+                        return (msg, *updates)
+                    new_model = _normalize_model_label(settings.get("model_arch", "Flux.2 Klein (4B)"))
                     new_vram = settings.get("vram_size", "16")
                     new_comfy = settings.get("comfy_models_dir", "")
                     new_w = settings.get("resolution_w", 1024)
@@ -485,6 +478,12 @@ def construct_ui():
                     new_control_w = settings.get("control_resolution_w", 0)
                     new_control_h = settings.get("control_resolution_h", 0)
                     new_no_resize_control = settings.get("no_resize_control", False)
+                    new_image_dir = settings.get("image_directory") or os.path.join(path, "training")
+                    new_cache_dir = settings.get("cache_directory") or os.path.join(path, "cache")
+                    new_caption_ext = settings.get("caption_extension", ".txt")
+                    new_num_repeats = settings.get("num_repeats", 1)
+                    new_enable_bucket = settings.get("enable_bucket", True)
+                    new_bucket_no_upscale = settings.get("bucket_no_upscale", False)
                     new_vae = settings.get("vae_path", "")
                     new_te1 = settings.get("text_encoder1_path", "")
                     new_te2 = settings.get("text_encoder2_path", "")
@@ -550,6 +549,12 @@ def construct_ui():
                         new_control_w,
                         new_control_h,
                         new_no_resize_control,
+                        new_image_dir,
+                        new_cache_dir,
+                        new_caption_ext,
+                        new_num_repeats,
+                        new_enable_bucket,
+                        new_bucket_no_upscale,
                         preview_content,
                         new_vae,
                         new_te1,
@@ -587,54 +592,7 @@ def construct_ui():
                         new_out_comfy,
                     )
                 except Exception as e:
-                    return (
-                        f"Error initializing project: {str(e)}",
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                        gr.update(),
-                    )
+                    return (f"Error initializing project: {str(e)}",) + tuple(gr.update() for _ in range(51))
 
             def generate_config(
                 project_path,
@@ -651,6 +609,12 @@ def construct_ui():
                 control_w,
                 control_h,
                 no_resize_ctrl,
+                image_dir_val,
+                cache_dir_val,
+                caption_ext_val,
+                num_repeats_val,
+                enable_bucket_val,
+                bucket_no_upscale_val,
             ):
                 if not project_path:
                     return "Error: Project directory not specified.\nエラー: プロジェクトディレクトリが指定されていません。", ""
@@ -671,26 +635,47 @@ def construct_ui():
                     control_resolution_w=control_w,
                     control_resolution_h=control_h,
                     no_resize_control=no_resize_ctrl,
+                    image_directory=image_dir_val,
+                    cache_directory=cache_dir_val,
+                    caption_extension=caption_ext_val,
+                    num_repeats=num_repeats_val,
+                    enable_bucket=enable_bucket_val,
+                    bucket_no_upscale=bucket_no_upscale_val,
                 )
 
                 # Normalize paths
                 project_path = os.path.abspath(project_path)
-                image_dir = os.path.join(project_path, "training").replace("\\", "/")
-                cache_dir = os.path.join(project_path, "cache").replace("\\", "/")
+                image_dir_raw = (image_dir_val or "").strip()
+                cache_dir_raw = (cache_dir_val or "").strip()
+                if not image_dir_raw:
+                    image_dir_raw = os.path.join(project_path, "training")
+                if not cache_dir_raw:
+                    cache_dir_raw = os.path.join(project_path, "cache")
+
+                image_dir = image_dir_raw.replace("\\", "/")
+                cache_dir = cache_dir_raw.replace("\\", "/")
+
+                caption_ext = (caption_ext_val or ".txt").strip()
+                if not caption_ext:
+                    caption_ext = ".txt"
+                try:
+                    num_repeats_int = int(num_repeats_val)
+                except Exception:
+                    num_repeats_int = 1
 
                 toml_content = f"""# Auto-generated by Musubi Tuner GUI
 
 [general]
 resolution = [{int(w)}, {int(h)}]
-caption_extension = ".txt"
+caption_extension = "{caption_ext}"
 batch_size = {int(batch)}
-enable_bucket = true
-bucket_no_upscale = false
+enable_bucket = {str(bool(enable_bucket_val)).lower()}
+bucket_no_upscale = {str(bool(bucket_no_upscale_val)).lower()}
 
 [[datasets]]
 image_directory = "{image_dir}"
 cache_directory = "{cache_dir}"
-num_repeats = 1
+num_repeats = {num_repeats_int}
 """
                 control_dir = (control_dir or "").strip()
                 if control_dir:
@@ -714,29 +699,6 @@ num_repeats = 1
                 except Exception as e:
                     return f"Error generating config / 設定ファイルの生成に失敗しました: {str(e)}", ""
 
-        with gr.Accordion(i18n("acc_preprocessing"), open=False, elem_classes=["section-card"]):
-            gr.Markdown(i18n("desc_preprocessing"))
-            with gr.Row():
-                set_preprocessing_defaults_btn = gr.Button(i18n("btn_set_paths"))
-                auto_detect_paths_btn = gr.Button(i18n("btn_auto_detect_paths"))
-            auto_detect_status = gr.Markdown("")
-            with gr.Row(elem_classes=["path-row"]):
-                vae_path = gr.Textbox(label=i18n("lbl_vae_path"), placeholder=i18n("ph_vae_path"), max_lines=1, scale=8)
-                browse_vae = gr.Button(i18n("btn_browse"), scale=1)
-            with gr.Row(elem_classes=["path-row"]):
-                text_encoder1_path = gr.Textbox(label=i18n("lbl_te1_path"), placeholder=i18n("ph_te1_path"), max_lines=1, scale=8)
-                browse_te1 = gr.Button(i18n("btn_browse"), scale=1)
-            with gr.Row(elem_classes=["path-row"]):
-                text_encoder2_path = gr.Textbox(label=i18n("lbl_te2_path"), placeholder=i18n("ph_te2_path"), max_lines=1, scale=8)
-                browse_te2 = gr.Button(i18n("btn_browse"), scale=1)
-
-            with gr.Row():
-                cache_latents_btn = gr.Button(i18n("btn_cache_latents"))
-                cache_text_btn = gr.Button(i18n("btn_cache_text"))
-
-            # Simple output area for caching logs
-            caching_output = gr.Textbox(label=i18n("lbl_cache_log"), lines=10, interactive=False)
-
             def validate_models_dir(path):
                 if not path:
                     return "Please enter a ComfyUI models directory. / ComfyUIのmodelsディレクトリを入力してください。"
@@ -753,6 +715,7 @@ num_repeats = 1
                 return "Valid ComfyUI models directory structure found / 有効なComfyUI modelsディレクトリ構造が見つかりました。"
 
             def set_recommended_settings(project_path, model_arch, vram_val):
+                model_arch = _normalize_model_label(model_arch)
                 w, h = config_manager.get_resolution(model_arch)
                 recommended_batch_size = config_manager.get_batch_size(model_arch, vram_val)
 
@@ -761,6 +724,7 @@ num_repeats = 1
                 return w, h, recommended_batch_size
 
             def set_preprocessing_defaults(project_path, comfy_models_dir, model_arch):
+                model_arch = _normalize_model_label(model_arch)
                 if not comfy_models_dir:
                     return gr.update(), gr.update(), gr.update()
 
@@ -779,6 +743,7 @@ num_repeats = 1
                 return vae_default, te1_default, te2_default
 
             def auto_detect_paths(project_path, comfy_models_dir, model_arch):
+                model_arch = _normalize_model_label(model_arch)
                 if not comfy_models_dir:
                     return gr.update(), gr.update(), gr.update(), gr.update(), i18n("msg_auto_detect_fail").format(
                         e="ComfyUI models directory not set"
@@ -839,7 +804,7 @@ num_repeats = 1
                     dit_patterns = ["qwen_image_bf16.safetensors", "*qwen*image*bf16*.safetensors"]
                     vae_patterns = ["qwen_image_vae.safetensors", "*qwen*image*vae*.safetensors"]
                     te_patterns = ["qwen_2.5_vl_7b.safetensors", "*qwen*2.5*vl*7b*.safetensors", "*qwen*vl*7b*.safetensors"]
-                else:  # Z-Image-Turbo (default)
+                else:  # Z-Image (default)
                     dit_patterns = ["z_image_de_turbo_v1_bf16.safetensors", "*z*image*de*turbo*bf16*.safetensors"]
                     vae_patterns = ["ae.safetensors"]
                     te_patterns = ["qwen_3_4b.safetensors", "*qwen*3*4b*.safetensors"]
@@ -900,6 +865,7 @@ num_repeats = 1
                 )
 
             def set_training_defaults(project_path, comfy_models_dir, model_arch, vram_val):
+                model_arch = _normalize_model_label(model_arch)
                 # Get number of images from project_path to adjust num_epochs later
                 cache_dir = os.path.join(project_path, "cache")
                 if model_arch == "Qwen-Image":
@@ -945,8 +911,9 @@ num_repeats = 1
                 fp8_s = defaults.get("fp8_scaled", True)
                 fp8_l = defaults.get("fp8_llm", False)
 
-                sample_w_default, sample_h_default = config_manager.get_resolution(model_arch)
-                sample_out = "" # Default empty
+                sample_w = config_manager.get_resolution(model_arch)[0]
+                sample_h = config_manager.get_resolution(model_arch)[1]
+                sample_out = ""
 
                 if project_path:
                     save_project_settings(
@@ -969,10 +936,9 @@ num_repeats = 1
                         gradient_checkpointing=grad_cp,
                         fp8_scaled=fp8_s,
                         fp8_llm=fp8_l,
-                        vram_size=vram_val,  # Ensure VRAM size is saved
                         sample_every_n_epochs=sample_every_n_epochs,
-                        sample_w=sample_w_default,
-                        sample_h=sample_h_default,
+                        sample_w=sample_w,
+                        sample_h=sample_h,
                         sample_output_dir=sample_out,
                     )
 
@@ -996,22 +962,13 @@ num_repeats = 1
                     fp8_s,
                     fp8_l,
                     sample_every_n_epochs,
-                    sample_w_default,
-                    sample_h_default,
+                    sample_w,
+                    sample_h,
                     sample_out,
                 )
 
-            def estimate_vram(
-                model_arch,
-                w,
-                h,
-                batch,
-                prec,
-                grad_cp,
-                fp8_s,
-                fp8_l,
-                swap,
-            ):
+            def estimate_vram(model_arch, w, h, batch, prec, grad_cp, fp8_s, fp8_l, swap):
+                model_arch = _normalize_model_label(model_arch)
                 try:
                     w = int(w)
                     h = int(h)
@@ -1019,11 +976,8 @@ num_repeats = 1
                 except Exception:
                     return i18n("msg_est_vram_note")
 
-                if w <= 0 or h <= 0 or batch <= 0:
-                    return i18n("msg_est_vram_note")
-
                 base_map = {
-                    "Z-Image-Turbo": 8.0,
+                    "Z-Image": 8.0,
                     "Qwen-Image": 18.0,
                     "Flux.2 Dev": 18.0,
                     "Flux.2 Klein (4B)": 12.0,
@@ -1055,7 +1009,7 @@ num_repeats = 1
 
                 if swap_val > 0:
                     max_swap_map = {
-                        "Z-Image-Turbo": 28,
+                        "Z-Image": 28,
                         "Qwen-Image": 58,
                         "Flux.2 Dev": 29,
                         "Flux.2 Klein (4B)": 13,
@@ -1203,13 +1157,15 @@ num_repeats = 1
 
             def run_command(command):
                 try:
+                    encoding = locale.getpreferredencoding(False) or "utf-8"
                     process = subprocess.Popen(
                         command,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT,
                         shell=True,
                         text=True,
-                        encoding="utf-8",
+                        encoding=encoding,
+                        errors="replace",
                         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
                     )
 
@@ -1235,6 +1191,7 @@ num_repeats = 1
                 if not project_path:
                     yield "Error: Project directory not set. / プロジェクトディレクトリが設定されていません。"
                     return
+                model = _normalize_model_label(model)
 
                 # Save settings first
                 save_project_settings(
@@ -1273,7 +1230,7 @@ num_repeats = 1
                 cmd = [sys.executable, script_path, "--dataset_config", config_path, "--vae", vae_path_val]
 
                 # Placeholder for argument modification
-                if model == "Z-Image-Turbo":
+                if _is_zimage(model):
                     pass
                 elif model == "Qwen-Image":
                     pass
@@ -1295,6 +1252,7 @@ num_repeats = 1
                 if not project_path:
                     yield "Error: Project directory not set. / プロジェクトディレクトリが設定されていません。"
                     return
+                model = _normalize_model_label(model)
 
                 # Save settings first
                 save_project_settings(
@@ -1344,7 +1302,7 @@ num_repeats = 1
                 ]
 
                 # Model-specific argument modification
-                if model == "Z-Image-Turbo":
+                if _is_zimage(model):
                     pass
                 elif model == "Qwen-Image":
                     # Add --fp8_vl for low VRAM (16GB or less)
@@ -1364,6 +1322,29 @@ num_repeats = 1
                 yield f"Starting Text Encoder Caching. Please wait for the first log to appear. / Text Encoderのキャッシュを開始します。最初のログが表示されるまでにしばらくかかります。\nCommand: {command_str}\n\n"
 
                 yield from run_command(command_str)
+
+        with gr.Accordion(i18n("acc_preprocessing"), open=False, elem_classes=["section-card"]):
+            gr.Markdown(i18n("desc_preprocessing"))
+            with gr.Row():
+                set_preprocessing_defaults_btn = gr.Button(i18n("btn_set_paths"))
+                auto_detect_paths_btn = gr.Button(i18n("btn_auto_detect_paths"))
+            auto_detect_status = gr.Markdown("")
+            with gr.Row(elem_classes=["path-row"]):
+                vae_path = gr.Textbox(label=i18n("lbl_vae_path"), placeholder=i18n("ph_vae_path"), max_lines=1, scale=8)
+                browse_vae = gr.Button(i18n("btn_browse"), scale=1)
+            with gr.Row(elem_classes=["path-row"]):
+                text_encoder1_path = gr.Textbox(label=i18n("lbl_te1_path"), placeholder=i18n("ph_te1_path"), max_lines=1, scale=8)
+                browse_te1 = gr.Button(i18n("btn_browse"), scale=1)
+            with gr.Row(elem_classes=["path-row"]):
+                text_encoder2_path = gr.Textbox(label=i18n("lbl_te2_path"), placeholder=i18n("ph_te2_path"), max_lines=1, scale=8)
+                browse_te2 = gr.Button(i18n("btn_browse"), scale=1)
+
+            with gr.Row():
+                cache_latents_btn = gr.Button(i18n("btn_cache_latents"))
+                cache_text_btn = gr.Button(i18n("btn_cache_text"))
+
+            # Simple output area for caching logs
+            caching_output = gr.Textbox(label=i18n("lbl_cache_log"), lines=10, interactive=False)
 
         with gr.Accordion(i18n("acc_training"), open=False, elem_classes=["section-card"]):
             gr.Markdown(i18n("desc_training_basic"))
@@ -1567,6 +1548,7 @@ num_repeats = 1
             lr_scheduler_args,  # Added
         ):
             import shlex
+            model = _normalize_model_label(model)
 
             if not project_path:
                 return "Error: Project directory not set. / プロジェクトディレクトリが設定されていません。"
@@ -1624,7 +1606,7 @@ num_repeats = 1
             )
 
             # Model specific command modification
-            if model == "Z-Image-Turbo":
+            if _is_zimage(model):
                 arch_name = "zimage"
             elif model == "Qwen-Image":
                 arch_name = "qwen_image"
@@ -1742,13 +1724,13 @@ num_repeats = 1
                 templates = {
                     # prompt, negative prompt, width, height, flow shift, steps, CFG scale, seed
                     "Qwen-Image": "{prompt} --n {neg} --w {w} --h {h} --fs 2.2 --s 20 --l 4.0 --d 1234",
-                    "Z-Image-Turbo": "{prompt} --n {neg} --w {w} --h {h} --fs 3.0 --s 20 --l 5.0 --d 1234",
+                    "Z-Image": "{prompt} --n {neg} --w {w} --h {h} --fs 3.0 --s 20 --l 5.0 --d 1234",
                     # Flux.2 uses guidance scale; distilled klein uses fewer steps
                     "Flux.2 Dev": "{prompt} --n {neg} --w {w} --h {h} --s 50 --g 4.0 --d 1234",
                     "Flux.2 Klein (4B)": "{prompt} --n {neg} --w {w} --h {h} --s 4 --g 1.0 --d 1234",
                     "Flux.2 Klein Base (4B)": "{prompt} --n {neg} --w {w} --h {h} --s 50 --g 4.0 --d 1234",
                 }
-                template = templates.get(model, templates["Z-Image-Turbo"])
+                template = templates.get(model, templates["Z-Image"])
                 prompt_str = (sample_prompt_val or "").replace("\n", " ").strip()
                 neg_str = (sample_negative_prompt_val or "").replace("\n", " ").strip()
                 try:
@@ -1775,7 +1757,7 @@ num_repeats = 1
                 )
                 if sample_out_dir and sample_out_dir.strip():
                     inner_cmd.extend(["--sample_output_dir", sample_out_dir.strip()])
-            
+
             if prec != "no":
                 inner_cmd.extend(["--mixed_precision", prec])
 
@@ -1787,7 +1769,7 @@ num_repeats = 1
                 inner_cmd.append("--fp8_scaled")
 
             if fp8_l:
-                if model == "Z-Image-Turbo":
+                if _is_zimage(model):
                     inner_cmd.append("--fp8_llm")
                 elif model == "Qwen-Image":
                     inner_cmd.append("--fp8_vl")
@@ -1803,7 +1785,7 @@ num_repeats = 1
             inner_cmd.append("--split_attn")
 
             # Model specific command modification
-            if model == "Z-Image-Turbo":
+            if _is_zimage(model):
                 pass
             elif model == "Qwen-Image":
                 pass
@@ -1825,19 +1807,19 @@ num_repeats = 1
             inner_cmd_str = subprocess.list2cmdline(inner_cmd)
 
             # Chain commands: Run training -> echo message -> pause >nul (hides default message)
-            final_cmd_str = f"{inner_cmd_str} & echo. & echo Training finished. Press any key to close this window... 学習が完了しました。このウィンドウを閉じるには任意のキーを押してください。 & pause >nul"
+            final_cmd_str = f"{inner_cmd_str} & echo. & echo Training finished. Press any key to close this window... & pause >nul"
 
             try:
                 # Open in new console window
                 flags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
                 # Pass explicit 'cmd', '/c', string to ensure proper execution
                 subprocess.Popen(["cmd", "/c", final_cmd_str], creationflags=flags, shell=False)
-                return f"Training started in a new window! / 新しいウィンドウで学習が開始されました！\nCommand: {inner_cmd_str}"
+                return f"Training started in a new window! / 譁ｰ縺励＞繧ｦ繧｣繝ｳ繝峨え縺ｧ蟄ｦ鄙偵′髢句ｧ九＆繧後∪縺励◆。\nCommand: {inner_cmd_str}"
             except Exception as e:
-                return f"Error starting training / 学習の開始に失敗しました: {str(e)}"
+                return f"Error starting training / 蟄ｦ鄙偵・髢句ｧ九↓螟ｱ謨励＠縺ｾ縺励◆: {str(e)}"
 
         def update_model_info(model):
-            if model == "Z-Image-Turbo":
+            if _is_zimage(model):
                 return i18n("desc_training_zimage")
             elif model == "Qwen-Image":
                 return i18n("desc_qwen_notes")
@@ -1861,6 +1843,12 @@ num_repeats = 1
                 control_res_w,
                 control_res_h,
                 no_resize_control,
+                image_directory,
+                cache_directory,
+                caption_extension,
+                num_repeats,
+                enable_bucket,
+                bucket_no_upscale,
                 toml_preview,
                 vae_path,
                 text_encoder1_path,
@@ -1918,6 +1906,12 @@ num_repeats = 1
                 control_res_w,
                 control_res_h,
                 no_resize_control,
+                image_directory,
+                cache_directory,
+                caption_extension,
+                num_repeats,
+                enable_bucket,
+                bucket_no_upscale,
             ],
             outputs=[dataset_status, toml_preview],
         )
@@ -1970,6 +1964,8 @@ num_repeats = 1
         browse_project_dir.click(fn=browse_dir, inputs=[project_dir], outputs=[project_dir])
         browse_comfy_dir.click(fn=browse_dir, inputs=[comfy_models_dir], outputs=[comfy_models_dir])
         browse_control_dir.click(fn=browse_dir, inputs=[control_directory], outputs=[control_directory])
+        browse_image_dir.click(fn=browse_dir, inputs=[image_directory], outputs=[image_directory])
+        browse_cache_dir.click(fn=browse_dir, inputs=[cache_directory], outputs=[cache_directory])
 
         browse_vae.click(fn=browse_file, inputs=[vae_path], outputs=[vae_path])
         browse_te1.click(fn=browse_file, inputs=[text_encoder1_path], outputs=[text_encoder1_path])
@@ -2133,6 +2129,7 @@ num_repeats = 1
                 project_dir, model_arch, vram_size, comfy_models_dir,
                 resolution_w, resolution_h, batch_size,
                 control_directory, control_res_w, control_res_h, no_resize_control,
+                image_directory, cache_directory, caption_extension, num_repeats, enable_bucket, bucket_no_upscale,
                 vae_path, text_encoder1_path, text_encoder2_path,
                 dit_path, output_name, network_dim, learning_rate, optimizer_type, optimizer_args, lr_scheduler, lr_scheduler_args,
                 network_alpha, lr_warmup_steps, seed, max_grad_norm,
@@ -2155,6 +2152,7 @@ num_repeats = 1
                 project_dir, model_arch, vram_size, comfy_models_dir,
                 resolution_w, resolution_h, batch_size,
                 control_directory, control_res_w, control_res_h, no_resize_control,
+                image_directory, cache_directory, caption_extension, num_repeats, enable_bucket, bucket_no_upscale,
                 vae_path, text_encoder1_path, text_encoder2_path,
                 dit_path, output_name, network_dim, learning_rate, optimizer_type, optimizer_args, lr_scheduler, lr_scheduler_args,
                 network_alpha, lr_warmup_steps, seed, max_grad_norm,

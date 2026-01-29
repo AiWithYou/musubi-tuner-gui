@@ -4,7 +4,7 @@ import os
 class ConfigManager:
     def __init__(self):
         self.models = {
-            "Z-Image-Turbo": {
+            "Z-Image": {
                 "resolution": (1024, 1024),
                 "vae_subpath": ["vae", "ae.safetensors"],
                 "te1_subpath": ["text_encoders", "qwen_3_4b.safetensors"],
@@ -131,6 +131,8 @@ class ConfigManager:
                 },
             },
         }
+        # Backward compatible alias for older presets
+        self.models["Z-Image-Turbo"] = self.models["Z-Image"]
 
     def get_resolution(self, model_name):
         return self.models.get(model_name, {}).get("resolution", (1024, 1024))
