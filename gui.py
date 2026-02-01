@@ -46,6 +46,11 @@ APP_CSS = """
   --ink: #1f2937;
   --muted: #6b7280;
   --accent: #0f766e;
+  --accent-project: #2563eb;
+  --accent-preset: #f59e0b;
+  --accent-path: #16a34a;
+  --accent-model: #0ea5e9;
+  --accent-training: #f97316;
   --border: #e5e7eb;
   --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
 }
@@ -76,6 +81,30 @@ APP_CSS = """
   box-shadow: var(--shadow);
 }
 
+.section-card.card-preset {
+  border-left: 6px solid var(--accent-preset);
+}
+
+.section-card.card-project {
+  border-left: 6px solid var(--accent-project);
+}
+
+.section-card.card-model {
+  border-left: 6px solid var(--accent-model);
+}
+
+.section-card.card-preprocess {
+  border-left: 6px solid var(--accent-path);
+}
+
+.section-card.card-training {
+  border-left: 6px solid var(--accent-training);
+}
+
+.section-card.card-post {
+  border-left: 6px solid #64748b;
+}
+
 .gr-button {
   border-radius: 10px;
 }
@@ -87,6 +116,61 @@ APP_CSS = """
 
 .path-row {
   align-items: flex-end;
+}
+
+.project-row {
+  border-left: 4px solid var(--accent-project);
+  border-radius: 10px;
+  padding-left: 8px;
+  background: linear-gradient(90deg, rgba(37, 99, 235, 0.08), rgba(37, 99, 235, 0));
+}
+
+.env-row {
+  border-left: 4px solid var(--accent-path);
+  border-radius: 10px;
+  padding-left: 8px;
+  background: linear-gradient(90deg, rgba(22, 163, 74, 0.08), rgba(22, 163, 74, 0));
+}
+
+.context-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.context-legend .tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.context-legend .tag.preset {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #9a3412;
+}
+
+.context-legend .tag.project {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+.context-legend .tag.path {
+  background: #ecfdf3;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.context-legend .legend-note {
+  color: var(--muted);
+  font-size: 0.9rem;
 }
 
 .subtle-note {
@@ -176,6 +260,16 @@ def construct_ui():
     ensure_default_presets()
     initial_fp8_llm = config_manager.get_training_defaults("Flux.2 Klein (4B)", "24", "").get("fp8_llm", False)
 
+    def _context_legend_html():
+        return f"""
+        <div class="context-legend">
+          <span class="tag preset">{i18n('tag_preset')}</span>
+          <span class="tag project">{i18n('tag_project')}</span>
+          <span class="tag path">{i18n('tag_paths')}</span>
+          <span class="legend-note">{i18n('desc_preset_scope')}</span>
+        </div>
+        """
+
     def get_preset_list():
         return [os.path.splitext(os.path.basename(f))[0] for f in glob.glob(os.path.join(PRESETS_DIR, "*.json"))]
 
@@ -206,39 +300,134 @@ def construct_ui():
         except Exception as e:
             return i18n("msg_preset_error").format(e=str(e))
 
-    def load_preset(name):
+    def load_preset(name, apply_paths):
+        empty_updates = [gr.update()] * 51
         if not name:
-            return [gr.update()] * 51 # Return no updates
+            return [i18n("msg_preset_error").format(e="Name is empty"), *empty_updates]
         try:
             path = os.path.join(PRESETS_DIR, f"{name}.json")
             if not os.path.exists(path):
-                return [gr.update()] * 51
+                return [i18n("msg_preset_error").format(e="Preset not found"), *empty_updates]
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            
-            # Return values in order. Use get with defaults.
+
+            def _looks_shifted_preset(payload):
+                if "sample_output_dir" not in payload:
+                    return False
+                if "output_comfy" in payload:
+                    return False
+                sample_h_val = payload.get("sample_h")
+                sample_neg_val = payload.get("sample_neg")
+                if isinstance(sample_h_val, (int, float)):
+                    return False
+                if isinstance(sample_neg_val, (int, float)):
+                    return True
+                return False
+
+            def _repair_shifted_preset(payload):
+                fixed = dict(payload)
+                fixed["sample_prompt"] = payload.get("sample_output_dir", "")
+                fixed["sample_neg"] = payload.get("sample_prompt", "")
+                fixed["sample_w"] = payload.get("sample_neg", 1024)
+                fixed["sample_h"] = payload.get("sample_w", 1024)
+                fixed["input_lora"] = payload.get("sample_h", "")
+                fixed["output_comfy"] = payload.get("input_lora", "")
+                fixed["sample_output_dir"] = ""
+                return fixed
+
+            repaired = False
+            if _looks_shifted_preset(data):
+                data = _repair_shifted_preset(data)
+                repaired = True
+
+            path_keys = {
+                "comfy_models_dir",
+                "control_directory",
+                "image_directory",
+                "cache_directory",
+                "vae_path",
+                "text_encoder1_path",
+                "text_encoder2_path",
+                "dit_path",
+                "sample_output_dir",
+                "input_lora",
+                "output_comfy",
+            }
+
+            def _field(key, default=None):
+                if key not in data:
+                    return gr.update()
+                if (not apply_paths) and key in path_keys:
+                    return gr.update()
+                return data.get(key, default)
+
+            status = i18n("msg_preset_loaded").format(name=name)
+            if not apply_paths:
+                status = f"{status}\n\n{i18n('msg_preset_paths_kept')}"
+            if repaired:
+                status = f"{status}\n\n{i18n('msg_preset_repaired')}"
+
             model_val = _normalize_model_label(data.get("model_arch", "Flux.2 Klein (4B)"))
+            model_update = model_val if "model_arch" in data else gr.update()
+
             return [
-                gr.update(), model_val, data.get("vram_size", "24"), data.get("comfy_models_dir", ""),
-                data.get("resolution_w", 1024), data.get("resolution_h", 1024), data.get("batch_size", 1),
-                data.get("control_directory", ""), data.get("control_resolution_w", 0), data.get("control_resolution_h", 0), data.get("no_resize_control", False),
-                data.get("image_directory", ""), data.get("cache_directory", ""), data.get("caption_extension", ".txt"), data.get("num_repeats", 1),
-                data.get("enable_bucket", True), data.get("bucket_no_upscale", False),
-                data.get("vae_path", ""), data.get("text_encoder1_path", ""), data.get("text_encoder2_path", ""),
-                data.get("dit_path", ""), data.get("output_name", "my_lora"), data.get("dim", 32), data.get("lr", 1e-4),
-                data.get("optimizer_type", "adamw8bit"), data.get("optimizer_args", ""),
-                data.get("lr_scheduler", "constant"), data.get("lr_scheduler_args", ""),
-                data.get("network_alpha", 1), data.get("lr_warmup_steps", 0), data.get("seed", 42), data.get("max_grad_norm", 1.0),
-                data.get("epochs", 16), data.get("save_every", 1),
-                data.get("flow_shift", 1.0), data.get("block_swap", 0), data.get("pinned", False), data.get("mixed_precision", "bf16"), data.get("grad_checkpointing", True),
-                data.get("fp8_scaled", False), data.get("fp8_llm", False), data.get("additional_args", ""),
-                data.get("sample_images", True), data.get("sample_every", 1), data.get("sample_output_dir", ""), data.get("sample_prompt", ""), data.get("sample_neg", ""), data.get("sample_w", 1024), data.get("sample_h", 1024),
-                data.get("input_lora", ""), data.get("output_comfy", "")
+                status,
+                gr.update(),
+                model_update,
+                _field("vram_size", "24"),
+                _field("comfy_models_dir", ""),
+                _field("resolution_w", 1024),
+                _field("resolution_h", 1024),
+                _field("batch_size", 1),
+                _field("control_directory", ""),
+                _field("control_resolution_w", 0),
+                _field("control_resolution_h", 0),
+                _field("no_resize_control", False),
+                _field("image_directory", ""),
+                _field("cache_directory", ""),
+                _field("caption_extension", ".txt"),
+                _field("num_repeats", 1),
+                _field("enable_bucket", True),
+                _field("bucket_no_upscale", False),
+                _field("vae_path", ""),
+                _field("text_encoder1_path", ""),
+                _field("text_encoder2_path", ""),
+                _field("dit_path", ""),
+                _field("output_name", "my_lora"),
+                _field("dim", 32),
+                _field("lr", 1e-4),
+                _field("optimizer_type", "adamw8bit"),
+                _field("optimizer_args", ""),
+                _field("lr_scheduler", "constant"),
+                _field("lr_scheduler_args", ""),
+                _field("network_alpha", 1),
+                _field("lr_warmup_steps", 0),
+                _field("seed", 42),
+                _field("max_grad_norm", 1.0),
+                _field("epochs", 16),
+                _field("save_every", 1),
+                _field("flow_shift", 1.0),
+                _field("block_swap", 0),
+                _field("pinned", False),
+                _field("mixed_precision", "bf16"),
+                _field("grad_checkpointing", True),
+                _field("fp8_scaled", False),
+                _field("fp8_llm", False),
+                _field("additional_args", ""),
+                _field("sample_images", True),
+                _field("sample_every", 1),
+                _field("sample_output_dir", ""),
+                _field("sample_prompt", ""),
+                _field("sample_neg", ""),
+                _field("sample_w", 1024),
+                _field("sample_h", 1024),
+                _field("input_lora", ""),
+                _field("output_comfy", ""),
             ]
         except Exception as e:
-             # In case of error, just don't update anything or handle gracefully
-             print(f"Error loading preset: {e}")
-             return [gr.update()] * 51
+            # In case of error, just don't update anything or handle gracefully
+            print(f"Error loading preset: {e}")
+            return [i18n("msg_preset_error").format(e=str(e)), *empty_updates]
 
     def refresh_preset_dropdown():
         return gr.update(choices=get_preset_list())
@@ -327,7 +516,8 @@ def construct_ui():
         gr.Markdown(i18n("app_desc"), elem_id="app-desc")
 
         # Presets Section
-        with gr.Accordion(i18n("header_presets"), open=False, elem_classes=["section-card"]):
+        with gr.Accordion(i18n("header_presets"), open=False, elem_classes=["section-card", "card-preset"]):
+            gr.HTML(_context_legend_html())
             with gr.Row():
                 preset_name = gr.Textbox(label=i18n("lbl_preset_name"), scale=2)
                 save_preset_btn = gr.Button(i18n("btn_save_preset"), scale=1)
@@ -335,11 +525,12 @@ def construct_ui():
                 load_preset_dd = gr.Dropdown(label=i18n("lbl_load_preset"), choices=get_preset_list(), scale=2)
                 load_preset_btn = gr.Button(i18n("btn_load_preset"), scale=1)
                 refresh_preset_btn = gr.Button(i18n("btn_refresh_presets"), scale=0)
+            preset_apply_paths = gr.Checkbox(label=i18n("lbl_preset_apply_paths"), value=False)
             preset_status = gr.Markdown("")
 
-        with gr.Accordion(i18n("acc_project"), open=True, elem_classes=["section-card"]):
+        with gr.Accordion(i18n("acc_project"), open=True, elem_classes=["section-card", "card-project"]):
             gr.Markdown(i18n("desc_project"))
-            with gr.Row(elem_classes=["path-row"]):
+            with gr.Row(elem_classes=["path-row", "project-row"]):
                 project_dir = gr.Textbox(label=i18n("lbl_proj_dir"), placeholder=i18n("ph_proj_dir"), max_lines=1, scale=8)
                 browse_project_dir = gr.Button(i18n("btn_browse"), scale=1)
 
@@ -347,7 +538,7 @@ def construct_ui():
             init_btn = gr.Button(i18n("btn_init_project"))
             project_status = gr.Markdown("")
 
-        with gr.Accordion(i18n("acc_model"), open=False, elem_classes=["section-card"]):
+        with gr.Accordion(i18n("acc_model"), open=False, elem_classes=["section-card", "card-model"]):
             gr.Markdown(i18n("desc_model"))
             with gr.Row():
                 model_arch = gr.Dropdown(
@@ -363,7 +554,7 @@ def construct_ui():
                 )
                 vram_size = gr.Dropdown(label=i18n("lbl_vram"), choices=["12", "16", "24", "32", ">32"], value="24")
 
-            with gr.Row(elem_classes=["path-row"]):
+            with gr.Row(elem_classes=["path-row", "env-row"]):
                 comfy_models_dir = gr.Textbox(label=i18n("lbl_comfy_dir"), placeholder=i18n("ph_comfy_dir"), max_lines=1, scale=8)
                 browse_comfy_dir = gr.Button(i18n("btn_browse"), scale=1)
 
@@ -390,7 +581,7 @@ def construct_ui():
 
             gr.Markdown(i18n("header_control"))
             gr.Markdown(i18n("desc_control"))
-            with gr.Row(elem_classes=["path-row"]):
+            with gr.Row(elem_classes=["path-row", "env-row"]):
                 control_directory = gr.Textbox(label=i18n("lbl_control_dir"), placeholder=i18n("ph_control_dir"), max_lines=1, scale=8)
                 browse_control_dir = gr.Button(i18n("btn_browse"), scale=1)
             with gr.Row():
@@ -400,10 +591,10 @@ def construct_ui():
 
             gr.Markdown(i18n("header_dataset_details"))
             gr.Markdown(i18n("desc_dataset_details"))
-            with gr.Row(elem_classes=["path-row"]):
+            with gr.Row(elem_classes=["path-row", "env-row"]):
                 image_directory = gr.Textbox(label=i18n("lbl_image_dir"), placeholder=i18n("ph_image_dir"), max_lines=1, scale=8)
                 browse_image_dir = gr.Button(i18n("btn_browse"), scale=1)
-            with gr.Row(elem_classes=["path-row"]):
+            with gr.Row(elem_classes=["path-row", "env-row"]):
                 cache_directory = gr.Textbox(label=i18n("lbl_cache_dir"), placeholder=i18n("ph_cache_dir"), max_lines=1, scale=8)
                 browse_cache_dir = gr.Button(i18n("btn_browse"), scale=1)
             with gr.Row():
@@ -758,14 +949,27 @@ num_repeats = {num_repeats_int}
                     if not search_dir or not os.path.exists(search_dir):
                         return ""
                     for pattern in patterns:
-                        matches = glob.glob(os.path.join(search_dir, pattern))
-                        matches.sort()
-                        if matches:
-                            return matches[0]
+                        candidates = [
+                            os.path.join(search_dir, pattern),
+                            os.path.join(search_dir, "**", pattern),
+                        ]
+                        for candidate in candidates:
+                            matches = glob.glob(candidate, recursive=True)
+                            matches.sort()
+                            if matches:
+                                return matches[0]
                     return ""
 
                 if model_arch == "Flux.2 Dev":
-                    dit_patterns = ["flux2-dev.safetensors", "flux2_dev.safetensors", "*flux2*dev*.safetensors"]
+                    dit_patterns = [
+                        "flux2-dev.safetensors",
+                        "flux2_dev.safetensors",
+                        "flux-2-dev.safetensors",
+                        "flux_2_dev.safetensors",
+                        "*flux2*dev*.safetensors",
+                        "*flux-2*dev*.safetensors",
+                        "*flux_2*dev*.safetensors",
+                    ]
                     vae_patterns = ["ae.safetensors"]
                     te_patterns = [
                         "*mistral*00001-of-*.safetensors",
@@ -776,7 +980,11 @@ num_repeats = {num_repeats_int}
                     dit_patterns = [
                         "flux2-klein-4b.safetensors",
                         "flux2_klein_4b.safetensors",
+                        "flux-2-klein-4b.safetensors",
+                        "flux_2_klein_4b.safetensors",
                         "*flux2*klein*4b*.safetensors",
+                        "*flux-2*klein*4b*.safetensors",
+                        "*flux_2*klein*4b*.safetensors",
                     ]
                     vae_patterns = ["ae.safetensors"]
                     te_patterns = [
@@ -790,7 +998,11 @@ num_repeats = {num_repeats_int}
                     dit_patterns = [
                         "flux2-klein-base-4b.safetensors",
                         "flux2_klein_base_4b.safetensors",
+                        "flux-2-klein-base-4b.safetensors",
+                        "flux_2_klein_base_4b.safetensors",
                         "*flux2*klein*base*4b*.safetensors",
+                        "*flux-2*klein*base*4b*.safetensors",
+                        "*flux_2*klein*base*4b*.safetensors",
                     ]
                     vae_patterns = ["ae.safetensors"]
                     te_patterns = [
@@ -805,7 +1017,11 @@ num_repeats = {num_repeats_int}
                     vae_patterns = ["qwen_image_vae.safetensors", "*qwen*image*vae*.safetensors"]
                     te_patterns = ["qwen_2.5_vl_7b.safetensors", "*qwen*2.5*vl*7b*.safetensors", "*qwen*vl*7b*.safetensors"]
                 else:  # Z-Image (default)
-                    dit_patterns = ["z_image_de_turbo_v1_bf16.safetensors", "*z*image*de*turbo*bf16*.safetensors"]
+                    dit_patterns = [
+                        "z_image_de_turbo_v1_bf16.safetensors",
+                        "*z*image*de*turbo*bf16*.safetensors",
+                        "*z*image*de*turbo*.safetensors",
+                    ]
                     vae_patterns = ["ae.safetensors"]
                     te_patterns = ["qwen_3_4b.safetensors", "*qwen*3*4b*.safetensors"]
 
@@ -1323,19 +1539,19 @@ num_repeats = {num_repeats_int}
 
                 yield from run_command(command_str)
 
-        with gr.Accordion(i18n("acc_preprocessing"), open=False, elem_classes=["section-card"]):
+        with gr.Accordion(i18n("acc_preprocessing"), open=False, elem_classes=["section-card", "card-preprocess"]):
             gr.Markdown(i18n("desc_preprocessing"))
             with gr.Row():
                 set_preprocessing_defaults_btn = gr.Button(i18n("btn_set_paths"))
                 auto_detect_paths_btn = gr.Button(i18n("btn_auto_detect_paths"))
             auto_detect_status = gr.Markdown("")
-            with gr.Row(elem_classes=["path-row"]):
+            with gr.Row(elem_classes=["path-row", "env-row"]):
                 vae_path = gr.Textbox(label=i18n("lbl_vae_path"), placeholder=i18n("ph_vae_path"), max_lines=1, scale=8)
                 browse_vae = gr.Button(i18n("btn_browse"), scale=1)
-            with gr.Row(elem_classes=["path-row"]):
+            with gr.Row(elem_classes=["path-row", "env-row"]):
                 text_encoder1_path = gr.Textbox(label=i18n("lbl_te1_path"), placeholder=i18n("ph_te1_path"), max_lines=1, scale=8)
                 browse_te1 = gr.Button(i18n("btn_browse"), scale=1)
-            with gr.Row(elem_classes=["path-row"]):
+            with gr.Row(elem_classes=["path-row", "env-row"]):
                 text_encoder2_path = gr.Textbox(label=i18n("lbl_te2_path"), placeholder=i18n("ph_te2_path"), max_lines=1, scale=8)
                 browse_te2 = gr.Button(i18n("btn_browse"), scale=1)
 
@@ -1346,13 +1562,13 @@ num_repeats = {num_repeats_int}
             # Simple output area for caching logs
             caching_output = gr.Textbox(label=i18n("lbl_cache_log"), lines=10, interactive=False)
 
-        with gr.Accordion(i18n("acc_training"), open=False, elem_classes=["section-card"]):
+        with gr.Accordion(i18n("acc_training"), open=False, elem_classes=["section-card", "card-training"]):
             gr.Markdown(i18n("desc_training_basic"))
             training_model_info = gr.Markdown(i18n("desc_training_flux2"))
 
             with gr.Row():
                 set_training_defaults_btn = gr.Button(i18n("btn_rec_params"))
-            with gr.Row(elem_classes=["path-row"]):
+            with gr.Row(elem_classes=["path-row", "env-row"]):
                 dit_path = gr.Textbox(label=i18n("lbl_dit_path"), placeholder=i18n("ph_dit_path"), max_lines=1, scale=8)
                 browse_dit = gr.Button(i18n("btn_browse"), scale=1)
 
@@ -1435,7 +1651,7 @@ num_repeats = {num_repeats_int}
                     sample_w = gr.Number(label=i18n("lbl_sample_w"), value=1024, precision=0)
                     sample_h = gr.Number(label=i18n("lbl_sample_h"), value=1024, precision=0)
                     sample_every_n = gr.Number(label=i18n("lbl_sample_every_n"), value=1, precision=0)
-                with gr.Row(elem_classes=["path-row"]):
+                with gr.Row(elem_classes=["path-row", "env-row"]):
                     sample_output_dir = gr.Textbox(
                         label=i18n("lbl_sample_output_dir"),
                         placeholder=i18n("ph_sample_output_dir"),
@@ -1447,7 +1663,7 @@ num_repeats = {num_repeats_int}
                 gr.Markdown(i18n("desc_additional_args"))
                 additional_args = gr.Textbox(label=i18n("lbl_additional_args"), placeholder=i18n("ph_additional_args"))
 
-            with gr.Row(elem_classes=["path-row"]):
+            with gr.Row(elem_classes=["path-row", "env-row"]):
                 resume_path = gr.Textbox(label=i18n("lbl_resume"), placeholder=i18n("ph_resume"), scale=8)
                 browse_resume = gr.Button(i18n("btn_browse"), scale=1)
 
@@ -1456,14 +1672,14 @@ num_repeats = {num_repeats_int}
                 start_training_btn = gr.Button(i18n("btn_start_training"), variant="primary", scale=2)
                 tensorboard_btn = gr.Button(i18n("btn_tensorboard"), scale=1)
 
-        with gr.Accordion(i18n("acc_post_processing"), open=False, elem_classes=["section-card"]):
+        with gr.Accordion(i18n("acc_post_processing"), open=False, elem_classes=["section-card", "card-post"]):
             gr.Markdown(i18n("desc_post_proc"))
             with gr.Row():
                 set_post_proc_defaults_btn = gr.Button(i18n("btn_set_paths"))
-            with gr.Row(elem_classes=["path-row"]):
+            with gr.Row(elem_classes=["path-row", "env-row"]):
                 input_lora = gr.Textbox(label=i18n("lbl_input_lora"), placeholder=i18n("ph_input_lora"), max_lines=1, scale=8)
                 browse_input_lora = gr.Button(i18n("btn_browse"), scale=1)
-            with gr.Row(elem_classes=["path-row"]):
+            with gr.Row(elem_classes=["path-row", "env-row"]):
                 output_comfy_lora = gr.Textbox(label=i18n("lbl_output_comfy"), placeholder=i18n("ph_output_comfy"), max_lines=1, scale=8)
                 browse_output_lora = gr.Button(i18n("btn_browse"), scale=1)
 
@@ -2136,7 +2352,7 @@ num_repeats = {num_repeats_int}
                 num_epochs, save_every_n_epochs,
                 discrete_flow_shift, block_swap, use_pinned_memory_for_block_swap, mixed_precision, gradient_checkpointing,
                 fp8_scaled, fp8_llm, additional_args,
-                sample_images, sample_every_n, sample_prompt, sample_negative_prompt, sample_w, sample_h,
+                sample_images, sample_every_n, sample_output_dir, sample_prompt, sample_negative_prompt, sample_w, sample_h,
                 input_lora, output_comfy_lora
             ],
             outputs=[preset_status]
@@ -2147,8 +2363,9 @@ num_repeats = {num_repeats_int}
 
         load_preset_btn.click(
              fn=load_preset,
-             inputs=[load_preset_dd],
+             inputs=[load_preset_dd, preset_apply_paths],
              outputs=[
+                preset_status,
                 project_dir, model_arch, vram_size, comfy_models_dir,
                 resolution_w, resolution_h, batch_size,
                 control_directory, control_res_w, control_res_h, no_resize_control,
