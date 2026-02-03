@@ -3,6 +3,8 @@ import gradio as gr
 import inspect
 import locale
 import os
+import re
+import textwrap
 import warnings
 import toml
 import subprocess
@@ -37,48 +39,143 @@ warnings.filterwarnings(
 )
 
 APP_CSS = """
-@import url("https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
 
 :root {
-  --bg-1: #f6f2ea;
-  --bg-2: #e9f2ff;
-  --card: #ffffff;
-  --ink: #1f2937;
-  --muted: #6b7280;
+  --bg-1: #f7f1e3;
+  --bg-2: #e9f0ff;
+  --bg-3: #fcefdc;
+  --card: #fffdf8;
+  --ink: #1f1b16;
+  --muted: #5b5a57;
   --accent: #0f766e;
   --accent-project: #2563eb;
-  --accent-preset: #f59e0b;
+  --accent-preset: #f97316;
   --accent-path: #16a34a;
-  --accent-model: #0ea5e9;
-  --accent-training: #f97316;
-  --border: #e5e7eb;
-  --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  --accent-model: #0284c7;
+  --accent-training: #ef4444;
+  --border: rgba(31, 41, 55, 0.16);
+  --border-strong: rgba(31, 41, 55, 0.28);
+  --shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+  --shadow-soft: 0 10px 25px rgba(15, 23, 42, 0.08);
 }
 
 .gradio-container {
-  font-family: "Sora", "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
-  background: radial-gradient(1200px 600px at 90% -20%, var(--bg-2), transparent),
-              radial-gradient(1000px 500px at -10% 0%, #fbeee3, transparent),
-              linear-gradient(180deg, #f9fafb 0%, #f3f4f6 100%);
+  font-family: "Space Grotesk", "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
   color: var(--ink);
+  background:
+    radial-gradient(1200px 600px at 90% -20%, rgba(37, 99, 235, 0.15), transparent 70%),
+    radial-gradient(900px 500px at -10% 10%, rgba(249, 115, 22, 0.18), transparent 70%),
+    radial-gradient(800px 400px at 50% 120%, rgba(16, 185, 129, 0.16), transparent 60%),
+    linear-gradient(180deg, #faf7f0 0%, #f1f5f9 100%);
+  min-height: 100vh;
+}
+
+.gradio-container:before,
+.gradio-container:after {
+  content: "";
+  position: fixed;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: 999px;
+  filter: blur(20px);
+  opacity: 0.5;
+}
+
+.gradio-container:before {
+  width: 420px;
+  height: 420px;
+  top: -140px;
+  right: 8%;
+  background: rgba(37, 99, 235, 0.22);
+}
+
+.gradio-container:after {
+  width: 520px;
+  height: 520px;
+  bottom: -220px;
+  left: -120px;
+  background: rgba(249, 115, 22, 0.2);
 }
 
 #app-header h1 {
-  letter-spacing: -0.02em;
   font-weight: 700;
+  letter-spacing: -0.03em;
+  margin-bottom: 6px;
+}
+
+#app-header,
+#app-desc {
+  position: relative;
+  z-index: 1;
+  animation: fade-in 0.6s ease-out both;
 }
 
 #app-desc {
   color: var(--muted);
+  margin-bottom: 16px;
+  max-width: 900px;
+}
+
+#main-tabs {
+  position: relative;
+  z-index: 1;
+}
+
+#main-tabs .tab-nav {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px;
   margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow: var(--shadow-soft);
+}
+
+#main-tabs .tab-nav button {
+  border: 1px solid transparent;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-weight: 600;
+  background: transparent;
+  color: var(--muted);
+  transition: all 0.2s ease;
+}
+
+#main-tabs .tab-nav button:hover {
+  color: var(--ink);
+  border-color: var(--border-strong);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+#main-tabs .tab-nav button.selected,
+#main-tabs .tab-nav button.active,
+#main-tabs .tab-nav button[aria-selected="true"] {
+  color: var(--ink);
+  border-color: var(--border-strong);
+  background: #ffffff;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.12);
 }
 
 .section-card {
   background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 16px;
+  padding: 16px;
   box-shadow: var(--shadow);
+  animation: fade-in 0.4s ease-out both;
+}
+
+.section-card h2,
+.section-card h3,
+.section-card h4 {
+  margin: 0 0 8px 0;
+}
+
+.section-card + .section-card {
+  margin-top: 12px;
 }
 
 .section-card.card-preset {
@@ -106,30 +203,71 @@ APP_CSS = """
 }
 
 .gr-button {
-  border-radius: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  font-weight: 600;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.gr-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
 }
 
 .gr-button.primary {
   background: var(--accent);
   border-color: var(--accent);
+  color: #fff;
+}
+
+.gr-button.primary:hover {
+  background: #0d6e66;
+}
+
+.gr-text-input input,
+.gr-text-input textarea,
+.gr-textbox textarea,
+.gr-number input {
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.gr-group,
+.gr-row,
+.gr-column,
+.section-card {
+  overflow: visible;
+  position: relative;
+}
+
+.gr-dropdown {
+  position: relative;
+  z-index: 5;
+}
+
+.gr-dropdown .options,
+.gr-dropdown .choices,
+.gr-dropdown .dropdown {
+  z-index: 50;
 }
 
 .path-row {
   align-items: flex-end;
+  gap: 12px;
 }
 
 .project-row {
   border-left: 4px solid var(--accent-project);
-  border-radius: 10px;
-  padding-left: 8px;
-  background: linear-gradient(90deg, rgba(37, 99, 235, 0.08), rgba(37, 99, 235, 0));
+  border-radius: 12px;
+  padding-left: 10px;
+  background: linear-gradient(90deg, rgba(37, 99, 235, 0.12), rgba(37, 99, 235, 0));
 }
 
 .env-row {
   border-left: 4px solid var(--accent-path);
-  border-radius: 10px;
-  padding-left: 8px;
-  background: linear-gradient(90deg, rgba(22, 163, 74, 0.08), rgba(22, 163, 74, 0));
+  border-radius: 12px;
+  padding-left: 10px;
+  background: linear-gradient(90deg, rgba(22, 163, 74, 0.12), rgba(22, 163, 74, 0));
 }
 
 .context-legend {
@@ -137,33 +275,41 @@ APP_CSS = """
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 .context-legend .tag {
   display: inline-flex;
   align-items: center;
-  padding: 2px 10px;
+  padding: 4px 12px;
   border-radius: 999px;
   border: 1px solid var(--border);
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   font-weight: 600;
 }
 
+.context-legend > * {
+  flex: 0 0 auto;
+}
+
+.context-legend .gr-markdown p {
+  margin: 0;
+}
+
 .context-legend .tag.preset {
-  background: #fff7ed;
+  background: #fff1e7;
   border-color: #fdba74;
   color: #9a3412;
 }
 
 .context-legend .tag.project {
-  background: #eff6ff;
+  background: #eaf0ff;
   border-color: #93c5fd;
   color: #1d4ed8;
 }
 
 .context-legend .tag.path {
-  background: #ecfdf3;
+  background: #e9fbe9;
   border-color: #86efac;
   color: #166534;
 }
@@ -176,6 +322,28 @@ APP_CSS = """
 .subtle-note {
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 900px) {
+  #main-tabs .tab-nav {
+    border-radius: 16px;
+  }
+  .path-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .gr-button {
+    width: 100%;
+  }
 }
 """
 
@@ -260,15 +428,254 @@ def construct_ui():
     ensure_default_presets()
     initial_fp8_llm = config_manager.get_training_defaults("Flux.2 Klein (4B)", "24", "").get("fp8_llm", False)
 
-    def _context_legend_html():
-        return f"""
-        <div class="context-legend">
-          <span class="tag preset">{i18n('tag_preset')}</span>
-          <span class="tag project">{i18n('tag_project')}</span>
-          <span class="tag path">{i18n('tag_paths')}</span>
-          <span class="legend-note">{i18n('desc_preset_scope')}</span>
-        </div>
-        """
+    components = {}
+
+    def register(name, component):
+        components[name] = component
+        return component
+
+    def components_for(keys):
+        return [components[key] for key in keys]
+
+    def pack_updates(keys, updates, default_factory=gr.update):
+        packed = []
+        for key in keys:
+            if key in updates:
+                packed.append(updates[key])
+            else:
+                packed.append(default_factory())
+        return packed
+
+    def tab_label(text):
+        if not text:
+            return ""
+        label = re.sub(r"^#+\s*", "", str(text)).strip()
+        label = re.sub(r"^\d+\s*[\.\)\-:]\s*", "", label).strip()
+        return label
+
+    PRESET_FIELD_MAP = {
+        "project_dir": "project_dir",
+        "model_arch": "model_arch",
+        "vram_size": "vram_size",
+        "comfy_models_dir": "comfy_models_dir",
+        "resolution_w": "resolution_w",
+        "resolution_h": "resolution_h",
+        "batch_size": "batch_size",
+        "control_directory": "control_directory",
+        "control_resolution_w": "control_res_w",
+        "control_resolution_h": "control_res_h",
+        "no_resize_control": "no_resize_control",
+        "image_directory": "image_directory",
+        "cache_directory": "cache_directory",
+        "caption_extension": "caption_extension",
+        "num_repeats": "num_repeats",
+        "enable_bucket": "enable_bucket",
+        "bucket_no_upscale": "bucket_no_upscale",
+        "vae_path": "vae_path",
+        "text_encoder1_path": "text_encoder1_path",
+        "text_encoder2_path": "text_encoder2_path",
+        "dit_path": "dit_path",
+        "output_name": "output_name",
+        "dim": "network_dim",
+        "lr": "learning_rate",
+        "optimizer_type": "optimizer_type",
+        "optimizer_args": "optimizer_args",
+        "lr_scheduler": "lr_scheduler",
+        "lr_scheduler_args": "lr_scheduler_args",
+        "network_alpha": "network_alpha",
+        "lr_warmup_steps": "lr_warmup_steps",
+        "seed": "seed",
+        "max_grad_norm": "max_grad_norm",
+        "epochs": "num_epochs",
+        "save_every": "save_every_n_epochs",
+        "flow_shift": "discrete_flow_shift",
+        "block_swap": "block_swap",
+        "pinned": "use_pinned_memory_for_block_swap",
+        "mixed_precision": "mixed_precision",
+        "grad_checkpointing": "gradient_checkpointing",
+        "fp8_scaled": "fp8_scaled",
+        "fp8_llm": "fp8_llm",
+        "additional_args": "additional_args",
+        "sample_images": "sample_images",
+        "sample_every": "sample_every_n",
+        "sample_output_dir": "sample_output_dir",
+        "sample_prompt": "sample_prompt",
+        "sample_neg": "sample_negative_prompt",
+        "sample_w": "sample_w",
+        "sample_h": "sample_h",
+        "input_lora": "input_lora",
+        "output_comfy": "output_comfy_lora",
+    }
+
+    PRESET_DATA_KEYS = [
+        "project_dir",
+        "model_arch",
+        "vram_size",
+        "comfy_models_dir",
+        "resolution_w",
+        "resolution_h",
+        "batch_size",
+        "control_directory",
+        "control_resolution_w",
+        "control_resolution_h",
+        "no_resize_control",
+        "image_directory",
+        "cache_directory",
+        "caption_extension",
+        "num_repeats",
+        "enable_bucket",
+        "bucket_no_upscale",
+        "vae_path",
+        "text_encoder1_path",
+        "text_encoder2_path",
+        "dit_path",
+        "output_name",
+        "dim",
+        "lr",
+        "optimizer_type",
+        "optimizer_args",
+        "lr_scheduler",
+        "lr_scheduler_args",
+        "network_alpha",
+        "lr_warmup_steps",
+        "seed",
+        "max_grad_norm",
+        "epochs",
+        "save_every",
+        "flow_shift",
+        "block_swap",
+        "pinned",
+        "mixed_precision",
+        "grad_checkpointing",
+        "fp8_scaled",
+        "fp8_llm",
+        "additional_args",
+        "sample_images",
+        "sample_every",
+        "sample_output_dir",
+        "sample_prompt",
+        "sample_neg",
+        "sample_w",
+        "sample_h",
+        "input_lora",
+        "output_comfy",
+    ]
+    PRESET_COMPONENT_KEYS = [PRESET_FIELD_MAP[key] for key in PRESET_DATA_KEYS]
+    PRESET_OUTPUT_COMPONENT_KEYS = PRESET_COMPONENT_KEYS
+
+    INIT_OUTPUT_KEYS = [
+        "model_arch",
+        "vram_size",
+        "comfy_models_dir",
+        "resolution_w",
+        "resolution_h",
+        "batch_size",
+        "control_directory",
+        "control_res_w",
+        "control_res_h",
+        "no_resize_control",
+        "image_directory",
+        "cache_directory",
+        "caption_extension",
+        "num_repeats",
+        "enable_bucket",
+        "bucket_no_upscale",
+        "toml_preview",
+        "vae_path",
+        "text_encoder1_path",
+        "text_encoder2_path",
+        "dit_path",
+        "output_name",
+        "network_dim",
+        "learning_rate",
+        "optimizer_type",
+        "optimizer_args",
+        "lr_scheduler",
+        "lr_scheduler_args",
+        "network_alpha",
+        "lr_warmup_steps",
+        "seed",
+        "max_grad_norm",
+        "num_epochs",
+        "save_every_n_epochs",
+        "discrete_flow_shift",
+        "block_swap",
+        "use_pinned_memory_for_block_swap",
+        "mixed_precision",
+        "gradient_checkpointing",
+        "fp8_scaled",
+        "fp8_llm",
+        "additional_args",
+        "sample_images",
+        "sample_every_n",
+        "sample_output_dir",
+        "sample_prompt",
+        "sample_negative_prompt",
+        "sample_w",
+        "sample_h",
+        "input_lora",
+        "output_comfy_lora",
+    ]
+
+    TRAINING_DEFAULT_KEYS = [
+        "dit_path",
+        "network_dim",
+        "learning_rate",
+        "optimizer_type",
+        "optimizer_args",
+        "network_alpha",
+        "lr_warmup_steps",
+        "seed",
+        "max_grad_norm",
+        "num_epochs",
+        "save_every_n_epochs",
+        "discrete_flow_shift",
+        "block_swap",
+        "use_pinned_memory_for_block_swap",
+        "mixed_precision",
+        "gradient_checkpointing",
+        "fp8_scaled",
+        "fp8_llm",
+        "sample_every_n",
+        "sample_w",
+        "sample_h",
+        "sample_output_dir",
+    ]
+
+    QUICK_SETUP_OUTPUT_KEYS = [
+        "resolution_w",
+        "resolution_h",
+        "batch_size",
+        "vae_path",
+        "text_encoder1_path",
+        "text_encoder2_path",
+        "dit_path",
+        "network_dim",
+        "learning_rate",
+        "optimizer_type",
+        "optimizer_args",
+        "network_alpha",
+        "lr_warmup_steps",
+        "seed",
+        "max_grad_norm",
+        "num_epochs",
+        "save_every_n_epochs",
+        "discrete_flow_shift",
+        "block_swap",
+        "use_pinned_memory_for_block_swap",
+        "mixed_precision",
+        "gradient_checkpointing",
+        "fp8_scaled",
+        "fp8_llm",
+        "sample_every_n",
+        "sample_w",
+        "sample_h",
+        "sample_output_dir",
+        "training_model_info",
+        "quick_status",
+    ]
+
+    RECOMMENDED_KEYS = ["resolution_w", "resolution_h", "batch_size"]
 
     def get_preset_list():
         return [os.path.splitext(os.path.basename(f))[0] for f in glob.glob(os.path.join(PRESETS_DIR, "*.json"))]
@@ -278,21 +685,7 @@ def construct_ui():
             return i18n("msg_preset_error").format(e="Name is empty")
         try:
             # args order corresponds to the inputs list of save button
-            keys = [
-                "project_dir", "model_arch", "vram_size", "comfy_models_dir",
-                "resolution_w", "resolution_h", "batch_size",
-                "control_directory", "control_resolution_w", "control_resolution_h", "no_resize_control",
-                "image_directory", "cache_directory", "caption_extension", "num_repeats", "enable_bucket", "bucket_no_upscale",
-                "vae_path", "text_encoder1_path", "text_encoder2_path",
-                "dit_path", "output_name", "dim", "lr", "optimizer_type", "optimizer_args", "lr_scheduler", "lr_scheduler_args",
-                "network_alpha", "lr_warmup_steps", "seed", "max_grad_norm",
-                "epochs", "save_every",
-                "flow_shift", "block_swap", "pinned", "mixed_precision", "grad_checkpointing",
-                "fp8_scaled", "fp8_llm", "additional_args",
-                "sample_images", "sample_every", "sample_output_dir", "sample_prompt", "sample_neg", "sample_w", "sample_h",
-                "input_lora", "output_comfy"
-            ]
-            data = dict(zip(keys, args))
+            data = dict(zip(PRESET_DATA_KEYS, args))
             path = os.path.join(PRESETS_DIR, f"{name}.json")
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
@@ -301,7 +694,7 @@ def construct_ui():
             return i18n("msg_preset_error").format(e=str(e))
 
     def load_preset(name, apply_paths):
-        empty_updates = [gr.update()] * 51
+        empty_updates = pack_updates(PRESET_OUTPUT_COMPONENT_KEYS, {})
         if not name:
             return [i18n("msg_preset_error").format(e="Name is empty"), *empty_updates]
         try:
@@ -354,76 +747,26 @@ def construct_ui():
                 "output_comfy",
             }
 
-            def _field(key, default=None):
-                if key not in data:
-                    return gr.update()
-                if (not apply_paths) and key in path_keys:
-                    return gr.update()
-                return data.get(key, default)
-
             status = i18n("msg_preset_loaded").format(name=name)
             if not apply_paths:
                 status = f"{status}\n\n{i18n('msg_preset_paths_kept')}"
             if repaired:
                 status = f"{status}\n\n{i18n('msg_preset_repaired')}"
 
-            model_val = _normalize_model_label(data.get("model_arch", "Flux.2 Klein (4B)"))
-            model_update = model_val if "model_arch" in data else gr.update()
+            updates = {}
+            if "model_arch" in data:
+                updates["model_arch"] = _normalize_model_label(data.get("model_arch", "Flux.2 Klein (4B)"))
 
-            return [
-                status,
-                gr.update(),
-                model_update,
-                _field("vram_size", "24"),
-                _field("comfy_models_dir", ""),
-                _field("resolution_w", 1024),
-                _field("resolution_h", 1024),
-                _field("batch_size", 1),
-                _field("control_directory", ""),
-                _field("control_resolution_w", 0),
-                _field("control_resolution_h", 0),
-                _field("no_resize_control", False),
-                _field("image_directory", ""),
-                _field("cache_directory", ""),
-                _field("caption_extension", ".txt"),
-                _field("num_repeats", 1),
-                _field("enable_bucket", True),
-                _field("bucket_no_upscale", False),
-                _field("vae_path", ""),
-                _field("text_encoder1_path", ""),
-                _field("text_encoder2_path", ""),
-                _field("dit_path", ""),
-                _field("output_name", "my_lora"),
-                _field("dim", 32),
-                _field("lr", 1e-4),
-                _field("optimizer_type", "adamw8bit"),
-                _field("optimizer_args", ""),
-                _field("lr_scheduler", "constant"),
-                _field("lr_scheduler_args", ""),
-                _field("network_alpha", 1),
-                _field("lr_warmup_steps", 0),
-                _field("seed", 42),
-                _field("max_grad_norm", 1.0),
-                _field("epochs", 16),
-                _field("save_every", 1),
-                _field("flow_shift", 1.0),
-                _field("block_swap", 0),
-                _field("pinned", False),
-                _field("mixed_precision", "bf16"),
-                _field("grad_checkpointing", True),
-                _field("fp8_scaled", False),
-                _field("fp8_llm", False),
-                _field("additional_args", ""),
-                _field("sample_images", True),
-                _field("sample_every", 1),
-                _field("sample_output_dir", ""),
-                _field("sample_prompt", ""),
-                _field("sample_neg", ""),
-                _field("sample_w", 1024),
-                _field("sample_h", 1024),
-                _field("input_lora", ""),
-                _field("output_comfy", ""),
-            ]
+            for data_key, component_key in PRESET_FIELD_MAP.items():
+                if data_key in {"project_dir", "model_arch"}:
+                    continue
+                if data_key not in data:
+                    continue
+                if (not apply_paths) and data_key in path_keys:
+                    continue
+                updates[component_key] = data.get(data_key)
+
+            return [status, *pack_updates(PRESET_OUTPUT_COMPONENT_KEYS, updates)]
         except Exception as e:
             # In case of error, just don't update anything or handle gracefully
             print(f"Error loading preset: {e}")
@@ -487,6 +830,35 @@ def construct_ui():
         except Exception:
             return gr.update()
 
+    def open_folder(path):
+        target = (path or "").strip()
+        if not target:
+            return i18n("msg_open_path_missing").format(path=path or "")
+        if not os.path.exists(target):
+            return i18n("msg_open_path_missing").format(path=target)
+        try:
+            if os.name == "nt":
+                os.startfile(target)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", target])
+            else:
+                subprocess.Popen(["xdg-open", target])
+            return i18n("msg_open_path_ok").format(path=target)
+        except Exception as e:
+            return i18n("msg_open_path_fail").format(path=target, e=str(e))
+
+    def open_project_folder(path):
+        return open_folder(path)
+
+    def open_training_folder(path):
+        return open_folder(os.path.join(path, "training") if path else "")
+
+    def open_logs_folder(path):
+        return open_folder(os.path.join(path, "logs") if path else "")
+
+    def open_presets_folder():
+        return open_folder(PRESETS_DIR)
+
     def launch_tensorboard(project_dir):
         if not project_dir or not os.path.exists(project_dir):
             return "Error: Project directory invalid."
@@ -514,1178 +886,1207 @@ def construct_ui():
     with gr.Blocks(**block_kwargs) as demo:
         gr.Markdown(i18n("app_header"), elem_id="app-header")
         gr.Markdown(i18n("app_desc"), elem_id="app-desc")
-
-        # Presets Section
-        with gr.Accordion(i18n("header_presets"), open=False, elem_classes=["section-card", "card-preset"]):
-            gr.HTML(_context_legend_html())
-            with gr.Row():
-                preset_name = gr.Textbox(label=i18n("lbl_preset_name"), scale=2)
-                save_preset_btn = gr.Button(i18n("btn_save_preset"), scale=1)
-            with gr.Row():
-                load_preset_dd = gr.Dropdown(label=i18n("lbl_load_preset"), choices=get_preset_list(), scale=2)
-                load_preset_btn = gr.Button(i18n("btn_load_preset"), scale=1)
-                refresh_preset_btn = gr.Button(i18n("btn_refresh_presets"), scale=0)
-            preset_apply_paths = gr.Checkbox(label=i18n("lbl_preset_apply_paths"), value=False)
-            preset_status = gr.Markdown("")
-
-        with gr.Accordion(i18n("acc_project"), open=True, elem_classes=["section-card", "card-project"]):
-            gr.Markdown(i18n("desc_project"))
-            with gr.Row(elem_classes=["path-row", "project-row"]):
-                project_dir = gr.Textbox(label=i18n("lbl_proj_dir"), placeholder=i18n("ph_proj_dir"), max_lines=1, scale=8)
-                browse_project_dir = gr.Button(i18n("btn_browse"), scale=1)
-
-            # Placeholder for project initialization or loading
-            init_btn = gr.Button(i18n("btn_init_project"))
-            project_status = gr.Markdown("")
-
-        with gr.Accordion(i18n("acc_model"), open=False, elem_classes=["section-card", "card-model"]):
-            gr.Markdown(i18n("desc_model"))
-            with gr.Row():
-                model_arch = gr.Dropdown(
-                    label=i18n("lbl_model_arch"),
-                    choices=[
-                        "Flux.2 Klein (4B)",
-                        "Flux.2 Klein Base (4B)",
-                        "Flux.2 Dev",
-                        "Qwen-Image",
-                        "Z-Image",
-                    ],
-                    value="Flux.2 Klein (4B)",
-                )
-                vram_size = gr.Dropdown(label=i18n("lbl_vram"), choices=["12", "16", "24", "32", ">32"], value="24")
-
-            with gr.Row(elem_classes=["path-row", "env-row"]):
-                comfy_models_dir = gr.Textbox(label=i18n("lbl_comfy_dir"), placeholder=i18n("ph_comfy_dir"), max_lines=1, scale=8)
-                browse_comfy_dir = gr.Button(i18n("btn_browse"), scale=1)
-
-            # Validation for ComfyUI models directory
-            models_status = gr.Markdown("")
-            validate_models_btn = gr.Button(i18n("btn_validate_models"))
-
-            gr.Markdown(i18n("header_quick_actions"))
-            with gr.Row():
-                quick_setup_btn = gr.Button(i18n("btn_quick_setup"), variant="primary")
-                check_missing_btn = gr.Button(i18n("btn_check_missing"))
-            quick_status = gr.Markdown("", elem_classes=["subtle-note"])
-
-
-            # Placeholder for Dataset Settings (Step 3)
-            gr.Markdown(i18n("header_dataset"))
-            gr.Markdown(i18n("desc_dataset"))
-            with gr.Row():
-                set_rec_settings_btn = gr.Button(i18n("btn_rec_res_batch"))
-            with gr.Row():
-                resolution_w = gr.Number(label=i18n("lbl_res_w"), value=1024, precision=0)
-                resolution_h = gr.Number(label=i18n("lbl_res_h"), value=1024, precision=0)
-                batch_size = gr.Number(label=i18n("lbl_batch_size"), value=1, precision=0)
-
-            gr.Markdown(i18n("header_control"))
-            gr.Markdown(i18n("desc_control"))
-            with gr.Row(elem_classes=["path-row", "env-row"]):
-                control_directory = gr.Textbox(label=i18n("lbl_control_dir"), placeholder=i18n("ph_control_dir"), max_lines=1, scale=8)
-                browse_control_dir = gr.Button(i18n("btn_browse"), scale=1)
-            with gr.Row():
-                control_res_w = gr.Number(label=i18n("lbl_control_res_w"), value=0, precision=0)
-                control_res_h = gr.Number(label=i18n("lbl_control_res_h"), value=0, precision=0)
-                no_resize_control = gr.Checkbox(label=i18n("lbl_no_resize_control"), value=False)
-
-            gr.Markdown(i18n("header_dataset_details"))
-            gr.Markdown(i18n("desc_dataset_details"))
-            with gr.Row(elem_classes=["path-row", "env-row"]):
-                image_directory = gr.Textbox(label=i18n("lbl_image_dir"), placeholder=i18n("ph_image_dir"), max_lines=1, scale=8)
-                browse_image_dir = gr.Button(i18n("btn_browse"), scale=1)
-            with gr.Row(elem_classes=["path-row", "env-row"]):
-                cache_directory = gr.Textbox(label=i18n("lbl_cache_dir"), placeholder=i18n("ph_cache_dir"), max_lines=1, scale=8)
-                browse_cache_dir = gr.Button(i18n("btn_browse"), scale=1)
-            with gr.Row():
-                caption_extension = gr.Textbox(label=i18n("lbl_caption_ext"), value=".txt", max_lines=1)
-                num_repeats = gr.Number(label=i18n("lbl_num_repeats"), value=1, precision=0)
-            with gr.Row():
-                enable_bucket = gr.Checkbox(label=i18n("lbl_enable_bucket"), value=True)
-                bucket_no_upscale = gr.Checkbox(label=i18n("lbl_bucket_no_upscale"), value=False)
-
-            gen_toml_btn = gr.Button(i18n("btn_gen_config"))
-            dataset_status = gr.Markdown("")
-            toml_preview = gr.Code(label=i18n("lbl_toml_preview"), interactive=False)
-
-            def load_project_settings(project_path):
-                settings = {}
-                try:
-                    settings_path = os.path.join(project_path, "musubi_project.toml")
-                    if os.path.exists(settings_path):
-                        with open(settings_path, "r", encoding="utf-8") as f:
-                            settings = toml.load(f)
-                except Exception as e:
-                    print(f"Error loading project settings: {e}")
-                return settings
-
-            def load_dataset_config_content(project_path):
-                content = ""
-                try:
-                    config_path = os.path.join(project_path, "dataset_config.toml")
-                    if os.path.exists(config_path):
-                        with open(config_path, "r", encoding="utf-8") as f:
-                            content = f.read()
-                except Exception as e:
-                    print(f"Error reading dataset config: {e}")
-                return content
-
-            def save_project_settings(project_path, **kwargs):
-                try:
-                    # Load existing settings to support partial updates
-                    settings = load_project_settings(project_path)
-                    # Update with new values
-                    settings.update(kwargs)
-
-                    settings_path = os.path.join(project_path, "musubi_project.toml")
-                    with open(settings_path, "w", encoding="utf-8") as f:
-                        toml.dump(settings, f)
-                except Exception as e:
-                    print(f"Error saving project settings: {e}")
-
-            def init_project(path):
-                if not path:
-                    return ("Please enter a project directory path.",) + tuple(gr.update() for _ in range(51))
-                try:
-                    os.makedirs(os.path.join(path, "training"), exist_ok=True)
-
-                    # Load settings if available
-                    settings = load_project_settings(path)
-                    if not settings:
-                        preview_content = load_dataset_config_content(path)
-                        msg = f"Project initialized at {path}. No saved settings found; keeping current values."
-                        msg += "\n\nプロジェクトが初期化されました。保存された設定がないため、現在の入力を保持します。"
-                        updates = [gr.update()] * 51
-                        if preview_content:
-                            updates[16] = preview_content
-                        return (msg, *updates)
-                    new_model = _normalize_model_label(settings.get("model_arch", "Flux.2 Klein (4B)"))
-                    new_vram = settings.get("vram_size", "16")
-                    new_comfy = settings.get("comfy_models_dir", "")
-                    new_w = settings.get("resolution_w", 1024)
-                    new_h = settings.get("resolution_h", 1024)
-                    new_batch = settings.get("batch_size", 1)
-                    new_control_dir = settings.get("control_directory", "")
-                    new_control_w = settings.get("control_resolution_w", 0)
-                    new_control_h = settings.get("control_resolution_h", 0)
-                    new_no_resize_control = settings.get("no_resize_control", False)
-                    new_image_dir = settings.get("image_directory") or os.path.join(path, "training")
-                    new_cache_dir = settings.get("cache_directory") or os.path.join(path, "cache")
-                    new_caption_ext = settings.get("caption_extension", ".txt")
-                    new_num_repeats = settings.get("num_repeats", 1)
-                    new_enable_bucket = settings.get("enable_bucket", True)
-                    new_bucket_no_upscale = settings.get("bucket_no_upscale", False)
-                    new_vae = settings.get("vae_path", "")
-                    new_te1 = settings.get("text_encoder1_path", "")
-                    new_te2 = settings.get("text_encoder2_path", "")
-
-                    # Training params
-                    new_dit = settings.get("dit_path", "")
-                    new_out_nm = settings.get("output_name", "my_lora")
-                    new_dim = settings.get("network_dim", 4)
-                    new_lr = settings.get("learning_rate", 1e-4)
-                    new_optimizer_type = settings.get("optimizer_type", "adamw8bit")
-                    new_optimizer_args = settings.get("optimizer_args", "")
-                    new_network_alpha = settings.get("network_alpha", 1)
-                    new_lr_warmup_steps = settings.get("lr_warmup_steps", 0)
-                    new_seed = settings.get("seed", 42)
-                    new_max_grad_norm = settings.get("max_grad_norm", 1.0)
-                    new_lr_scheduler = settings.get("lr_scheduler", "constant")
-                    new_lr_scheduler_args = settings.get("lr_scheduler_args", "")
-                    new_epochs = settings.get("num_epochs", 16)
-                    new_save_n = settings.get("save_every_n_epochs", 1)
-                    new_flow = settings.get("discrete_flow_shift", 2.0)
-                    new_swap = settings.get("block_swap", 0)
-                    new_use_pinned_memory_for_block_swap = settings.get("use_pinned_memory_for_block_swap", False)
-                    new_prec = settings.get("mixed_precision", "bf16")
-                    new_grad_cp = settings.get("gradient_checkpointing", True)
-                    new_fp8_s = settings.get("fp8_scaled", True)
-                    new_fp8_l = settings.get("fp8_llm", False)
-                    new_add_args = settings.get("additional_args", "")
-
-                    # Sample image params
-                    new_sample_enable = settings.get("sample_images", False)
-                    new_sample_every_n = settings.get("sample_every_n_epochs", 1)
-                    new_sample_output_dir = settings.get("sample_output_dir", "")
-                    new_sample_prompt = settings.get("sample_prompt", "")
-                    new_sample_negative = settings.get("sample_negative_prompt", "")
-                    new_sample_w = settings.get("sample_w", new_w)
-                    new_sample_h = settings.get("sample_h", new_h)
-
-                    # Post-processing params
-                    new_in_lora = settings.get("input_lora_path", "")
-                    new_out_comfy = settings.get("output_comfy_lora_path", "")
-
-                    # Load dataset config content
-                    preview_content = load_dataset_config_content(path)
-
-                    msg = f"Project initialized at {path}. "
-                    if settings:
-                        msg += " Settings loaded."
-                    msg += " 'training' folder ready. Configure the dataset in the 'training' folder. Images and caption files (same name as image, extension is '.txt') should be placed in the 'training' folder."
-                    msg += "\n\nプロジェクトが初期化されました。"
-                    if settings:
-                        msg += "設定が読み込まれました。"
-                    msg += "'training' フォルダが準備されました。画像とキャプションファイル（画像と同じファイル名で拡張子は '.txt'）を配置してください。"
-
-                    return (
-                        msg,
-                        new_model,
-                        new_vram,
-                        new_comfy,
-                        new_w,
-                        new_h,
-                        new_batch,
-                        new_control_dir,
-                        new_control_w,
-                        new_control_h,
-                        new_no_resize_control,
-                        new_image_dir,
-                        new_cache_dir,
-                        new_caption_ext,
-                        new_num_repeats,
-                        new_enable_bucket,
-                        new_bucket_no_upscale,
-                        preview_content,
-                        new_vae,
-                        new_te1,
-                        new_te2,
-                        new_dit,
-                        new_out_nm,
-                        new_dim,
-                        new_lr,
-                        new_optimizer_type,
-                        new_optimizer_args,
-                        new_lr_scheduler,
-                        new_lr_scheduler_args,
-                        new_network_alpha,
-                        new_lr_warmup_steps,
-                        new_seed,
-                        new_max_grad_norm,
-                        new_epochs,
-                        new_save_n,
-                        new_flow,
-                        new_swap,
-                        new_use_pinned_memory_for_block_swap,
-                        new_prec,
-                        new_grad_cp,
-                        new_fp8_s,
-                        new_fp8_l,
-                        new_add_args,
-                        new_sample_enable,
-                        new_sample_every_n,
-                        new_sample_output_dir,
-                        new_sample_prompt,
-                        new_sample_negative,
-                        new_sample_w,
-                        new_sample_h,
-                        new_in_lora,
-                        new_out_comfy,
-                    )
-                except Exception as e:
-                    return (f"Error initializing project: {str(e)}",) + tuple(gr.update() for _ in range(51))
-
-            def generate_config(
-                project_path,
-                w,
-                h,
-                batch,
-                model_val,
-                vram_val,
-                comfy_val,
-                vae_val,
-                te1_val,
-                te2_val,
-                control_dir,
-                control_w,
-                control_h,
-                no_resize_ctrl,
-                image_dir_val,
-                cache_dir_val,
-                caption_ext_val,
-                num_repeats_val,
-                enable_bucket_val,
-                bucket_no_upscale_val,
-            ):
-                if not project_path:
-                    return "Error: Project directory not specified.\nエラー: プロジェクトディレクトリが指定されていません。", ""
-
-                # Save project settings first
-                save_project_settings(
-                    project_path,
-                    model_arch=model_val,
-                    vram_size=vram_val,
-                    comfy_models_dir=comfy_val,
-                    resolution_w=w,
-                    resolution_h=h,
-                    batch_size=batch,
-                    vae_path=vae_val,
-                    text_encoder1_path=te1_val,
-                    text_encoder2_path=te2_val,
-                    control_directory=control_dir,
-                    control_resolution_w=control_w,
-                    control_resolution_h=control_h,
-                    no_resize_control=no_resize_ctrl,
-                    image_directory=image_dir_val,
-                    cache_directory=cache_dir_val,
-                    caption_extension=caption_ext_val,
-                    num_repeats=num_repeats_val,
-                    enable_bucket=enable_bucket_val,
-                    bucket_no_upscale=bucket_no_upscale_val,
-                )
-
-                # Normalize paths
-                project_path = os.path.abspath(project_path)
-                image_dir_raw = (image_dir_val or "").strip()
-                cache_dir_raw = (cache_dir_val or "").strip()
-                if not image_dir_raw:
-                    image_dir_raw = os.path.join(project_path, "training")
-                if not cache_dir_raw:
-                    cache_dir_raw = os.path.join(project_path, "cache")
-
-                image_dir = image_dir_raw.replace("\\", "/")
-                cache_dir = cache_dir_raw.replace("\\", "/")
-
-                caption_ext = (caption_ext_val or ".txt").strip()
-                if not caption_ext:
-                    caption_ext = ".txt"
-                try:
-                    num_repeats_int = int(num_repeats_val)
-                except Exception:
-                    num_repeats_int = 1
-
-                toml_content = f"""# Auto-generated by Musubi Tuner GUI
-
-[general]
-resolution = [{int(w)}, {int(h)}]
-caption_extension = "{caption_ext}"
-batch_size = {int(batch)}
-enable_bucket = {str(bool(enable_bucket_val)).lower()}
-bucket_no_upscale = {str(bool(bucket_no_upscale_val)).lower()}
-
-[[datasets]]
-image_directory = "{image_dir}"
-cache_directory = "{cache_dir}"
-num_repeats = {num_repeats_int}
-"""
-                control_dir = (control_dir or "").strip()
-                if control_dir:
-                    safe_control_dir = control_dir.replace("\\", "/")
-                    toml_content += f'control_directory = "{safe_control_dir}"\n'
-                    if no_resize_ctrl:
-                        toml_content += "no_resize_control = true\n"
-                    try:
-                        control_w_int = int(control_w)
-                        control_h_int = int(control_h)
-                    except Exception:
-                        control_w_int = 0
-                        control_h_int = 0
-                    if control_w_int > 0 and control_h_int > 0:
-                        toml_content += f"control_resolution = [{control_w_int}, {control_h_int}]\n"
-                try:
-                    config_path = os.path.join(project_path, "dataset_config.toml")
-                    with open(config_path, "w", encoding="utf-8") as f:
-                        f.write(toml_content)
-                    return f"Successfully generated config at / 設定ファイルが作成されました: {config_path}", toml_content
-                except Exception as e:
-                    return f"Error generating config / 設定ファイルの生成に失敗しました: {str(e)}", ""
-
-            def validate_models_dir(path):
-                if not path:
-                    return "Please enter a ComfyUI models directory. / ComfyUIのmodelsディレクトリを入力してください。"
-
-                required_subdirs = ["diffusion_models", "vae", "text_encoders"]
-                missing = []
-                for d in required_subdirs:
-                    if not os.path.exists(os.path.join(path, d)):
-                        missing.append(d)
-
-                if missing:
-                    return f"Error: Missing subdirectories in models folder / modelsフォルダに以下のサブディレクトリが見つかりません: {', '.join(missing)}"
-
-                return "Valid ComfyUI models directory structure found / 有効なComfyUI modelsディレクトリ構造が見つかりました。"
-
-            def set_recommended_settings(project_path, model_arch, vram_val):
-                model_arch = _normalize_model_label(model_arch)
-                w, h = config_manager.get_resolution(model_arch)
-                recommended_batch_size = config_manager.get_batch_size(model_arch, vram_val)
-
-                if project_path:
-                    save_project_settings(project_path, resolution_w=w, resolution_h=h, batch_size=recommended_batch_size)
-                return w, h, recommended_batch_size
-
-            def set_preprocessing_defaults(project_path, comfy_models_dir, model_arch):
-                model_arch = _normalize_model_label(model_arch)
-                if not comfy_models_dir:
-                    return gr.update(), gr.update(), gr.update()
-
-                vae_default, te1_default, te2_default = config_manager.get_preprocessing_paths(model_arch, comfy_models_dir)
-                if not te2_default:
-                    te2_default = ""  # Ensure empty string for text input
-                if model_arch.startswith("Flux.2") and te1_default and not os.path.exists(te1_default):
-                    # Flux.2 text encoder weights are often split; avoid auto-filling a bad path.
-                    te1_default = ""
-
-                if project_path:
-                    save_project_settings(
-                        project_path, vae_path=vae_default, text_encoder1_path=te1_default, text_encoder2_path=te2_default
-                    )
-
-                return vae_default, te1_default, te2_default
-
-            def auto_detect_paths(project_path, comfy_models_dir, model_arch):
-                model_arch = _normalize_model_label(model_arch)
-                if not comfy_models_dir:
-                    return gr.update(), gr.update(), gr.update(), gr.update(), i18n("msg_auto_detect_fail").format(
-                        e="ComfyUI models directory not set"
-                    )
-
-                base_dir = os.path.abspath(comfy_models_dir)
-                diffusion_dir = os.path.join(base_dir, "diffusion_models")
-                vae_dir = os.path.join(base_dir, "vae")
-                te_dir = os.path.join(base_dir, "text_encoders")
-
-                def find_first(search_dir, patterns):
-                    if not search_dir or not os.path.exists(search_dir):
-                        return ""
-                    for pattern in patterns:
-                        candidates = [
-                            os.path.join(search_dir, pattern),
-                            os.path.join(search_dir, "**", pattern),
-                        ]
-                        for candidate in candidates:
-                            matches = glob.glob(candidate, recursive=True)
-                            matches.sort()
-                            if matches:
-                                return matches[0]
-                    return ""
-
-                if model_arch == "Flux.2 Dev":
-                    dit_patterns = [
-                        "flux2-dev.safetensors",
-                        "flux2_dev.safetensors",
-                        "flux-2-dev.safetensors",
-                        "flux_2_dev.safetensors",
-                        "*flux2*dev*.safetensors",
-                        "*flux-2*dev*.safetensors",
-                        "*flux_2*dev*.safetensors",
-                    ]
-                    vae_patterns = ["ae.safetensors"]
-                    te_patterns = [
-                        "*mistral*00001-of-*.safetensors",
-                        "*mistral*00001*.safetensors",
-                        "*mistral*.safetensors",
-                    ]
-                elif model_arch == "Flux.2 Klein (4B)":
-                    dit_patterns = [
-                        "flux2-klein-4b.safetensors",
-                        "flux2_klein_4b.safetensors",
-                        "flux-2-klein-4b.safetensors",
-                        "flux_2_klein_4b.safetensors",
-                        "*flux2*klein*4b*.safetensors",
-                        "*flux-2*klein*4b*.safetensors",
-                        "*flux_2*klein*4b*.safetensors",
-                    ]
-                    vae_patterns = ["ae.safetensors"]
-                    te_patterns = [
-                        "qwen_3_4b.safetensors",
-                        "*qwen*3*4b*00001-of-*.safetensors",
-                        "*qwen*3*4b*.safetensors",
-                        "*qwen*4b*00001-of-*.safetensors",
-                        "*qwen*4b*.safetensors",
-                    ]
-                elif model_arch == "Flux.2 Klein Base (4B)":
-                    dit_patterns = [
-                        "flux2-klein-base-4b.safetensors",
-                        "flux2_klein_base_4b.safetensors",
-                        "flux-2-klein-base-4b.safetensors",
-                        "flux_2_klein_base_4b.safetensors",
-                        "*flux2*klein*base*4b*.safetensors",
-                        "*flux-2*klein*base*4b*.safetensors",
-                        "*flux_2*klein*base*4b*.safetensors",
-                    ]
-                    vae_patterns = ["ae.safetensors"]
-                    te_patterns = [
-                        "qwen_3_4b.safetensors",
-                        "*qwen*3*4b*00001-of-*.safetensors",
-                        "*qwen*3*4b*.safetensors",
-                        "*qwen*4b*00001-of-*.safetensors",
-                        "*qwen*4b*.safetensors",
-                    ]
-                elif model_arch == "Qwen-Image":
-                    dit_patterns = ["qwen_image_bf16.safetensors", "*qwen*image*bf16*.safetensors"]
-                    vae_patterns = ["qwen_image_vae.safetensors", "*qwen*image*vae*.safetensors"]
-                    te_patterns = ["qwen_2.5_vl_7b.safetensors", "*qwen*2.5*vl*7b*.safetensors", "*qwen*vl*7b*.safetensors"]
-                else:  # Z-Image (default)
-                    dit_patterns = [
-                        "z_image_de_turbo_v1_bf16.safetensors",
-                        "*z*image*de*turbo*bf16*.safetensors",
-                        "*z*image*de*turbo*.safetensors",
-                    ]
-                    vae_patterns = ["ae.safetensors"]
-                    te_patterns = ["qwen_3_4b.safetensors", "*qwen*3*4b*.safetensors"]
-
-                vae_found = find_first(vae_dir, vae_patterns)
-                te1_found = find_first(te_dir, te_patterns)
-                dit_found = find_first(diffusion_dir, dit_patterns)
-
-                # Save settings if project path is provided
-                if project_path:
-                    updates = {}
-                    if vae_found:
-                        updates["vae_path"] = vae_found
-                    if te1_found:
-                        updates["text_encoder1_path"] = te1_found
-                    if dit_found:
-                        updates["dit_path"] = dit_found
-                    if updates:
-                        save_project_settings(project_path, **updates)
-
-                # Build status message
-                label_vae = i18n("lbl_vae_path")
-                label_te1 = i18n("lbl_te1_path")
-                label_dit = i18n("lbl_dit_path")
-
-                found_lines = []
-                missing_labels = []
-                if vae_found:
-                    found_lines.append(f"- **{label_vae}**: `{vae_found}`")
-                else:
-                    missing_labels.append(label_vae)
-                if te1_found:
-                    found_lines.append(f"- **{label_te1}**: `{te1_found}`")
-                else:
-                    missing_labels.append(label_te1)
-                if dit_found:
-                    found_lines.append(f"- **{label_dit}**: `{dit_found}`")
-                else:
-                    missing_labels.append(label_dit)
-
-                lines = [f"**{i18n('msg_auto_detect_title')}**"]
-                if found_lines:
-                    lines.append(f"{i18n('msg_auto_detect_found')}:")
-                    lines.extend(found_lines)
-                if missing_labels:
-                    lines.append(f"{i18n('msg_auto_detect_missing')}: {', '.join(missing_labels)}")
-                if model_arch.startswith("Flux.2") and not te1_found:
-                    lines.append(i18n("msg_auto_detect_note_split"))
-
-                status_msg = "\n".join(lines)
-
-                return (
-                    gr.update(value=vae_found) if vae_found else gr.update(),
-                    gr.update(value=te1_found) if te1_found else gr.update(),
-                    gr.update(),
-                    gr.update(value=dit_found) if dit_found else gr.update(),
-                    status_msg,
-                )
-
-            def set_training_defaults(project_path, comfy_models_dir, model_arch, vram_val):
-                model_arch = _normalize_model_label(model_arch)
-                # Get number of images from project_path to adjust num_epochs later
-                cache_dir = os.path.join(project_path, "cache")
-                if model_arch == "Qwen-Image":
-                    arch_tag = "qwen_image"
-                elif model_arch.startswith("Flux.2"):
-                    arch_tag = "flux_2"
-                else:
-                    arch_tag = "z_image"
-                if os.path.exists(cache_dir):
-                    all_files = glob.glob(os.path.join(cache_dir, f"*_{arch_tag}*.safetensors"))
-                    latent_files = [f for f in all_files if not f.endswith("_te.safetensors")]
-                    num_images = len(latent_files)
-                else:
-                    num_images = 0
-
-                # Get training defaults from config manager
-                defaults = config_manager.get_training_defaults(model_arch, vram_val, comfy_models_dir)
-
-                # Adjust num_epochs based on number of images (simple heuristic)
-                default_num_steps = defaults.get("default_num_steps", 1000)
-                if num_images > 0:
-                    adjusted_epochs = max(1, int((default_num_steps / num_images)))
-                else:
-                    adjusted_epochs = 16  # Fallback default
-                sample_every_n_epochs = (adjusted_epochs // 4) if adjusted_epochs >= 4 else 1
-
-                dit_default = defaults.get("dit_path", "")
-                dim = defaults.get("network_dim", 4)
-                lr = defaults.get("learning_rate", 1e-4)
-                optimizer_type = defaults.get("optimizer_type", "adamw8bit")
-                optimizer_args = defaults.get("optimizer_args", "")
-                network_alpha = defaults.get("network_alpha", 1)
-                lr_warmup_steps = defaults.get("lr_warmup_steps", 0)
-                seed = defaults.get("seed", 42)
-                max_grad_norm = defaults.get("max_grad_norm", 1.0)
-                epochs = adjusted_epochs
-                save_n = defaults.get("save_every_n_epochs", 1)
-                flow = defaults.get("discrete_flow_shift", 2.0)
-                swap = defaults.get("block_swap", 0)
-                use_pinned_memory_for_block_swap = defaults.get("use_pinned_memory_for_block_swap", False)
-                prec = defaults.get("mixed_precision", "bf16")
-                grad_cp = defaults.get("gradient_checkpointing", True)
-                fp8_s = defaults.get("fp8_scaled", True)
-                fp8_l = defaults.get("fp8_llm", False)
-
-                sample_w = config_manager.get_resolution(model_arch)[0]
-                sample_h = config_manager.get_resolution(model_arch)[1]
-                sample_out = ""
-
-                if project_path:
-                    save_project_settings(
-                        project_path,
-                        dit_path=dit_default,
-                        network_dim=dim,
-                        learning_rate=lr,
-                        optimizer_type=optimizer_type,
-                        optimizer_args=optimizer_args,
-                        network_alpha=network_alpha,
-                        lr_warmup_steps=lr_warmup_steps,
-                        seed=seed,
-                        max_grad_norm=max_grad_norm,
-                        num_epochs=epochs,
-                        save_every_n_epochs=save_n,
-                        discrete_flow_shift=flow,
-                        block_swap=swap,
-                        use_pinned_memory_for_block_swap=use_pinned_memory_for_block_swap,
-                        mixed_precision=prec,
-                        gradient_checkpointing=grad_cp,
-                        fp8_scaled=fp8_s,
-                        fp8_llm=fp8_l,
-                        sample_every_n_epochs=sample_every_n_epochs,
-                        sample_w=sample_w,
-                        sample_h=sample_h,
-                        sample_output_dir=sample_out,
-                    )
-
-                return (
-                    dit_default,
-                    dim,
-                    lr,
-                    optimizer_type,
-                    optimizer_args,
-                    network_alpha,
-                    lr_warmup_steps,
-                    seed,
-                    max_grad_norm,
-                    epochs,
-                    save_n,
-                    flow,
-                    swap,
-                    use_pinned_memory_for_block_swap,
-                    prec,
-                    grad_cp,
-                    fp8_s,
-                    fp8_l,
-                    sample_every_n_epochs,
-                    sample_w,
-                    sample_h,
-                    sample_out,
-                )
-
-            def estimate_vram(model_arch, w, h, batch, prec, grad_cp, fp8_s, fp8_l, swap):
-                model_arch = _normalize_model_label(model_arch)
-                try:
-                    w = int(w)
-                    h = int(h)
-                    batch = int(batch)
-                except Exception:
-                    return i18n("msg_est_vram_note")
-
-                base_map = {
-                    "Z-Image": 8.0,
-                    "Qwen-Image": 18.0,
-                    "Flux.2 Dev": 18.0,
-                    "Flux.2 Klein (4B)": 12.0,
-                    "Flux.2 Klein Base (4B)": 14.0,
-                }
-                base_vram = base_map.get(model_arch, 12.0)
-
-                scale = (w * h) / (1024 * 1024) * max(1, batch)
-                vram = base_vram * scale
-
-                if prec == "no":
-                    vram *= 1.6
-                elif prec == "fp16":
-                    vram *= 0.95
-
-                if grad_cp:
-                    vram *= 0.85
-
-                if fp8_s:
-                    vram *= 0.85
-
-                if fp8_l:
-                    vram *= 0.9
-
-                try:
-                    swap_val = int(swap)
-                except Exception:
-                    swap_val = 0
-
-                if swap_val > 0:
-                    max_swap_map = {
-                        "Z-Image": 28,
-                        "Qwen-Image": 58,
-                        "Flux.2 Dev": 29,
-                        "Flux.2 Klein (4B)": 13,
-                        "Flux.2 Klein Base (4B)": 13,
-                    }
-                    max_swap = max_swap_map.get(model_arch, 30)
-                    swap_ratio = min(1.0, swap_val / max_swap)
-                    vram *= (1.0 - 0.4 * swap_ratio)
-
-                vram = max(1.0, vram)
-                low = vram * 0.8
-                high = vram * 1.2
-
-                return (
-                    f"**{i18n('msg_est_vram_title')}**: ~{low:.1f}–{high:.1f} GB\n\n"
-                    f"{i18n('msg_est_vram_note')}"
-                )
-
-            def _prefer_auto(auto_val, fallback):
-                if isinstance(auto_val, dict):
-                    if auto_val.get("value"):
-                        return auto_val
-                    return fallback
-                if isinstance(auto_val, str) and auto_val:
-                    return auto_val
-                return fallback
-
-            def quick_setup(project_path, model_arch, vram_val, comfy_models_dir):
-                w, h, batch = set_recommended_settings(project_path, model_arch, vram_val)
-
-                vae_default, te1_default, te2_default = set_preprocessing_defaults(project_path, comfy_models_dir, model_arch)
-                (
-                    dit_default,
-                    dim,
-                    lr,
-                    optimizer_type,
-                    optimizer_args,
-                    network_alpha,
-                    lr_warmup_steps,
-                    seed,
-                    max_grad_norm,
-                    epochs,
-                    save_n,
-                    flow,
-                    swap,
-                    use_pinned_memory_for_block_swap,
-                    prec,
-                    grad_cp,
-                    fp8_s,
-                    fp8_l,
-                    sample_every_n_epochs,
-                    sample_w_default,
-                    sample_h_default,
-                    sample_out,
-                ) = set_training_defaults(project_path, comfy_models_dir, model_arch, vram_val)
-
-                auto_vae = gr.update()
-                auto_te1 = gr.update()
-                auto_te2 = gr.update()
-                auto_dit = gr.update()
-                auto_status = ""
-                if comfy_models_dir:
-                    auto_vae, auto_te1, auto_te2, auto_dit, auto_status = auto_detect_paths(
-                        project_path, comfy_models_dir, model_arch
-                    )
-
-                status_msg = i18n("msg_quick_setup_done")
-                if auto_status:
-                    status_msg = f"{status_msg}\n\n{auto_status}"
-
-                return (
-                    w,
-                    h,
-                    batch,
-                    _prefer_auto(auto_vae, vae_default),
-                    _prefer_auto(auto_te1, te1_default),
-                    _prefer_auto(auto_te2, te2_default),
-                    _prefer_auto(auto_dit, dit_default),
-                    dim,
-                    lr,
-                    optimizer_type,
-                    optimizer_args,
-                    network_alpha,
-                    lr_warmup_steps,
-                    seed,
-                    max_grad_norm,
-                    epochs,
-                    save_n,
-                    flow,
-                    swap,
-                    use_pinned_memory_for_block_swap,
-                    prec,
-                    grad_cp,
-                    fp8_s,
-                    fp8_l,
-                    sample_every_n_epochs,
-                    sample_w_default,
-                    sample_h_default,
-                    sample_out,
-                    update_model_info(model_arch),
-                    status_msg,
-                )
-
-            def check_missing(
-                project_path,
-                comfy_models_dir,
-                vae_val,
-                te1_val,
-                dit_val,
-            ):
-                missing = []
-                if not project_path:
-                    missing.append(i18n("lbl_proj_dir"))
-                else:
-                    config_path = os.path.join(project_path, "dataset_config.toml")
-                    if not os.path.exists(config_path):
-                        missing.append("dataset_config.toml")
-                if not comfy_models_dir:
-                    missing.append(i18n("lbl_comfy_dir"))
-                if not vae_val:
-                    missing.append(i18n("lbl_vae_path"))
-                if not te1_val:
-                    missing.append(i18n("lbl_te1_path"))
-                if not dit_val:
-                    missing.append(i18n("lbl_dit_path"))
-
-                if missing:
-                    return f"**{i18n('msg_missing_title')}**\n- " + "\n- ".join(missing)
-                return "OK"
-
-            def set_post_processing_defaults(project_path, output_nm):
-                if not project_path or not output_nm:
-                    return gr.update(), gr.update()
-
-                models_dir = os.path.join(project_path, "models")
-                in_lora = os.path.join(models_dir, f"{output_nm}.safetensors")
-                out_lora = os.path.join(models_dir, f"{output_nm}_comfy.safetensors")
-
-                save_project_settings(project_path, input_lora_path=in_lora, output_comfy_lora_path=out_lora)
-
-                return in_lora, out_lora
-
-            import subprocess
-            import sys
-
-            def run_command(command):
-                try:
-                    encoding = locale.getpreferredencoding(False) or "utf-8"
-                    process = subprocess.Popen(
-                        command,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        shell=True,
-                        text=True,
-                        encoding=encoding,
-                        errors="replace",
-                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-                    )
-
-                    output_log = command + "\n\n"
-                    for line in process.stdout:
-                        output_log += line
-                        yield output_log
-
-                    process.wait()
-                    if process.returncode != 0:
-                        output_log += (
-                            f"\nError: Process exited with code / プロセスが次のコードでエラー終了しました: {process.returncode}"
+        with gr.Tabs(elem_id="main-tabs"):
+
+            with gr.TabItem(tab_label(i18n("acc_project"))):
+                # Presets Section
+                with gr.Group(elem_classes=["section-card", "card-preset"]):
+                    gr.Markdown(i18n("header_presets"))
+                    gr.Markdown(i18n("desc_preset_scope"), elem_classes=["subtle-note"])
+                    with gr.Row(elem_classes=["context-legend"]):
+                        gr.Markdown(i18n("tag_preset"), elem_classes=["tag", "preset"])
+                        gr.Markdown(i18n("tag_project"), elem_classes=["tag", "project"])
+                        gr.Markdown(i18n("tag_paths"), elem_classes=["tag", "path"])
+                    gr.Markdown(i18n("header_preset_save"))
+                    with gr.Row():
+                        preset_name = gr.Textbox(label=i18n("lbl_preset_name"), scale=2)
+                        save_preset_btn = gr.Button(i18n("btn_save_preset"), scale=1)
+                    gr.Markdown(i18n("header_preset_load"))
+                    with gr.Row():
+                        load_preset_dd = gr.Dropdown(label=i18n("lbl_load_preset"), choices=get_preset_list(), scale=2)
+                        load_preset_btn = gr.Button(i18n("btn_load_preset"), scale=1)
+                        refresh_preset_btn = gr.Button(i18n("btn_refresh_presets"), scale=0)
+                    with gr.Row():
+                        preset_apply_paths = gr.Checkbox(label=i18n("lbl_preset_apply_paths"), value=False, scale=2)
+                        open_presets_btn = gr.Button(i18n("btn_open_presets"), scale=1)
+                    preset_status = gr.Markdown("")
+        
+                with gr.Group(elem_classes=["section-card", "card-project"]):
+                    gr.Markdown(i18n("acc_project"))
+                    gr.Markdown(i18n("desc_project"))
+                    with gr.Row(elem_classes=["path-row", "project-row"]):
+                        project_dir = gr.Textbox(label=i18n("lbl_proj_dir"), placeholder=i18n("ph_proj_dir"), max_lines=1, scale=6)
+                        browse_project_dir = gr.Button(i18n("btn_browse"), scale=1)
+                        open_project_btn = gr.Button(i18n("btn_open_project"), scale=1)
+                    with gr.Row():
+                        open_training_btn = gr.Button(i18n("btn_open_training"))
+                        open_logs_btn = gr.Button(i18n("btn_open_logs"))
+        
+                    # Placeholder for project initialization or loading
+                    init_btn = gr.Button(i18n("btn_init_project"))
+                    project_status = gr.Markdown("")
+        
+            with gr.TabItem(tab_label(i18n("acc_model"))):
+                with gr.Group(elem_classes=["section-card", "card-model"]):
+                    gr.Markdown(i18n("acc_model"))
+                    gr.Markdown(i18n("desc_model"))
+                    with gr.Row():
+                        model_arch = gr.Dropdown(
+                            label=i18n("lbl_model_arch"),
+                            choices=[
+                                "Flux.2 Klein (4B)",
+                                "Flux.2 Klein Base (4B)",
+                                "Flux.2 Dev",
+                                "Qwen-Image",
+                                "Z-Image",
+                            ],
+                            value="Flux.2 Klein (4B)",
                         )
-                        yield output_log
-                    else:
-                        output_log += "\nProcess completed successfully / プロセスが正常に完了しました"
-                        yield output_log
+                        vram_size = gr.Dropdown(label=i18n("lbl_vram"), choices=["12", "16", "24", "32", ">32"], value="24")
+        
+                    with gr.Row(elem_classes=["path-row", "env-row"]):
+                        comfy_models_dir = gr.Textbox(label=i18n("lbl_comfy_dir"), placeholder=i18n("ph_comfy_dir"), max_lines=1, scale=8)
+                        browse_comfy_dir = gr.Button(i18n("btn_browse"), scale=1)
+        
+                    # Validation for ComfyUI models directory
+                    models_status = gr.Markdown("")
+                    validate_models_btn = gr.Button(i18n("btn_validate_models"))
+        
+                    gr.Markdown(i18n("header_quick_actions"))
+                    with gr.Row():
+                        quick_setup_btn = gr.Button(i18n("btn_quick_setup"), variant="primary")
+                        check_missing_btn = gr.Button(i18n("btn_check_missing"))
+                    quick_status = gr.Markdown("", elem_classes=["subtle-note"])
+        
+        
+                    # Placeholder for Dataset Settings (Step 3)
+                    gr.Markdown(i18n("header_dataset"))
+                    gr.Markdown(i18n("desc_dataset"))
+                    with gr.Row():
+                        set_rec_settings_btn = gr.Button(i18n("btn_rec_res_batch"))
+                    with gr.Row():
+                        resolution_w = gr.Number(label=i18n("lbl_res_w"), value=1024, precision=0)
+                        resolution_h = gr.Number(label=i18n("lbl_res_h"), value=1024, precision=0)
+                        batch_size = gr.Number(label=i18n("lbl_batch_size"), value=1, precision=0)
+        
+                    gr.Markdown(i18n("header_control"))
+                    gr.Markdown(i18n("desc_control"))
+                    with gr.Row(elem_classes=["path-row", "env-row"]):
+                        control_directory = gr.Textbox(label=i18n("lbl_control_dir"), placeholder=i18n("ph_control_dir"), max_lines=1, scale=8)
+                        browse_control_dir = gr.Button(i18n("btn_browse"), scale=1)
+                    with gr.Row():
+                        control_res_w = gr.Number(label=i18n("lbl_control_res_w"), value=0, precision=0)
+                        control_res_h = gr.Number(label=i18n("lbl_control_res_h"), value=0, precision=0)
+                        no_resize_control = gr.Checkbox(label=i18n("lbl_no_resize_control"), value=False)
+        
+                    gr.Markdown(i18n("header_dataset_details"))
+                    gr.Markdown(i18n("desc_dataset_details"))
+                    with gr.Row(elem_classes=["path-row", "env-row"]):
+                        image_directory = gr.Textbox(label=i18n("lbl_image_dir"), placeholder=i18n("ph_image_dir"), max_lines=1, scale=8)
+                        browse_image_dir = gr.Button(i18n("btn_browse"), scale=1)
+                    with gr.Row(elem_classes=["path-row", "env-row"]):
+                        cache_directory = gr.Textbox(label=i18n("lbl_cache_dir"), placeholder=i18n("ph_cache_dir"), max_lines=1, scale=8)
+                        browse_cache_dir = gr.Button(i18n("btn_browse"), scale=1)
+                    with gr.Row():
+                        caption_extension = gr.Textbox(label=i18n("lbl_caption_ext"), value=".txt", max_lines=1)
+                        num_repeats = gr.Number(label=i18n("lbl_num_repeats"), value=1, precision=0)
+                    with gr.Row():
+                        enable_bucket = gr.Checkbox(label=i18n("lbl_enable_bucket"), value=True)
+                        bucket_no_upscale = gr.Checkbox(label=i18n("lbl_bucket_no_upscale"), value=False)
+        
+                    gen_toml_btn = gr.Button(i18n("btn_gen_config"))
+                    dataset_status = gr.Markdown("")
+                    toml_preview = gr.Code(label=i18n("lbl_toml_preview"), interactive=False)
+        
+                    def load_project_settings(project_path):
+                        settings = {}
+                        try:
+                            settings_path = os.path.join(project_path, "musubi_project.toml")
+                            if os.path.exists(settings_path):
+                                with open(settings_path, "r", encoding="utf-8") as f:
+                                    settings = toml.load(f)
+                        except Exception as e:
+                            print(f"Error loading project settings: {e}")
+                        return settings
+        
+                    def load_dataset_config_content(project_path):
+                        content = ""
+                        try:
+                            config_path = os.path.join(project_path, "dataset_config.toml")
+                            if os.path.exists(config_path):
+                                with open(config_path, "r", encoding="utf-8") as f:
+                                    content = f.read()
+                        except Exception as e:
+                            print(f"Error reading dataset config: {e}")
+                        return content
+        
+                    def save_project_settings(project_path, **kwargs):
+                        try:
+                            # Load existing settings to support partial updates
+                            settings = load_project_settings(project_path)
+                            # Update with new values
+                            settings.update(kwargs)
+        
+                            settings_path = os.path.join(project_path, "musubi_project.toml")
+                            with open(settings_path, "w", encoding="utf-8") as f:
+                                toml.dump(settings, f)
+                        except Exception as e:
+                            print(f"Error saving project settings: {e}")
+        
+                    def init_project(path):
+                        if not path:
+                            return ("Please enter a project directory path.", *pack_updates(INIT_OUTPUT_KEYS, {}))
+                        try:
+                            os.makedirs(os.path.join(path, "training"), exist_ok=True)
+        
+                            # Load settings if available
+                            settings = load_project_settings(path)
+                            if not settings:
+                                preview_content = load_dataset_config_content(path)
+                                msg = f"Project initialized at {path}. No saved settings found; keeping current values."
+                                msg += "\n\nプロジェクトが初期化されました。保存された設定がないため、現在の入力を保持します。"
+                                updates = {}
+                                if preview_content:
+                                    updates["toml_preview"] = preview_content
+                                return (msg, *pack_updates(INIT_OUTPUT_KEYS, updates))
+                            new_model = _normalize_model_label(settings.get("model_arch", "Flux.2 Klein (4B)"))
+                            new_vram = settings.get("vram_size", "16")
+                            new_comfy = settings.get("comfy_models_dir", "")
+                            new_w = settings.get("resolution_w", 1024)
+                            new_h = settings.get("resolution_h", 1024)
+                            new_batch = settings.get("batch_size", 1)
+                            new_control_dir = settings.get("control_directory", "")
+                            new_control_w = settings.get("control_resolution_w", 0)
+                            new_control_h = settings.get("control_resolution_h", 0)
+                            new_no_resize_control = settings.get("no_resize_control", False)
+                            new_image_dir = settings.get("image_directory") or os.path.join(path, "training")
+                            new_cache_dir = settings.get("cache_directory") or os.path.join(path, "cache")
+                            new_caption_ext = settings.get("caption_extension", ".txt")
+                            new_num_repeats = settings.get("num_repeats", 1)
+                            new_enable_bucket = settings.get("enable_bucket", True)
+                            new_bucket_no_upscale = settings.get("bucket_no_upscale", False)
+                            new_vae = settings.get("vae_path", "")
+                            new_te1 = settings.get("text_encoder1_path", "")
+                            new_te2 = settings.get("text_encoder2_path", "")
+        
+                            # Training params
+                            new_dit = settings.get("dit_path", "")
+                            new_out_nm = settings.get("output_name", "my_lora")
+                            new_dim = settings.get("network_dim", 4)
+                            new_lr = settings.get("learning_rate", 1e-4)
+                            new_optimizer_type = settings.get("optimizer_type", "adamw8bit")
+                            new_optimizer_args = settings.get("optimizer_args", "")
+                            new_network_alpha = settings.get("network_alpha", 1)
+                            new_lr_warmup_steps = settings.get("lr_warmup_steps", 0)
+                            new_seed = settings.get("seed", 42)
+                            new_max_grad_norm = settings.get("max_grad_norm", 1.0)
+                            new_lr_scheduler = settings.get("lr_scheduler", "constant")
+                            new_lr_scheduler_args = settings.get("lr_scheduler_args", "")
+                            new_epochs = settings.get("num_epochs", 16)
+                            new_save_n = settings.get("save_every_n_epochs", 1)
+                            new_flow = settings.get("discrete_flow_shift", 2.0)
+                            new_swap = settings.get("block_swap", 0)
+                            new_use_pinned_memory_for_block_swap = settings.get("use_pinned_memory_for_block_swap", False)
+                            new_prec = settings.get("mixed_precision", "bf16")
+                            new_grad_cp = settings.get("gradient_checkpointing", True)
+                            new_fp8_s = settings.get("fp8_scaled", True)
+                            new_fp8_l = settings.get("fp8_llm", False)
+                            new_add_args = settings.get("additional_args", "")
+        
+                            # Sample image params
+                            new_sample_enable = settings.get("sample_images", False)
+                            new_sample_every_n = settings.get("sample_every_n_epochs", 1)
+                            new_sample_output_dir = settings.get("sample_output_dir", "")
+                            new_sample_prompt = settings.get("sample_prompt", "")
+                            new_sample_negative = settings.get("sample_negative_prompt", "")
+                            new_sample_w = settings.get("sample_w", new_w)
+                            new_sample_h = settings.get("sample_h", new_h)
+        
+                            # Post-processing params
+                            new_in_lora = settings.get("input_lora_path", "")
+                            new_out_comfy = settings.get("output_comfy_lora_path", "")
+        
+                            # Load dataset config content
+                            preview_content = load_dataset_config_content(path)
+        
+                            msg = f"Project initialized at {path}. "
+                            if settings:
+                                msg += " Settings loaded."
+                            msg += " 'training' folder ready. Configure the dataset in the 'training' folder. Images and caption files (same name as image, extension is '.txt') should be placed in the 'training' folder."
+                            msg += "\n\nプロジェクトが初期化されました。"
+                            if settings:
+                                msg += "設定が読み込まれました。"
+                            msg += "'training' フォルダが準備されました。画像とキャプションファイル（画像と同じファイル名で拡張子は '.txt'）を配置してください。"
+        
+                            updates = {
+                                "model_arch": new_model,
+                                "vram_size": new_vram,
+                                "comfy_models_dir": new_comfy,
+                                "resolution_w": new_w,
+                                "resolution_h": new_h,
+                                "batch_size": new_batch,
+                                "control_directory": new_control_dir,
+                                "control_res_w": new_control_w,
+                                "control_res_h": new_control_h,
+                                "no_resize_control": new_no_resize_control,
+                                "image_directory": new_image_dir,
+                                "cache_directory": new_cache_dir,
+                                "caption_extension": new_caption_ext,
+                                "num_repeats": new_num_repeats,
+                                "enable_bucket": new_enable_bucket,
+                                "bucket_no_upscale": new_bucket_no_upscale,
+                                "toml_preview": preview_content,
+                                "vae_path": new_vae,
+                                "text_encoder1_path": new_te1,
+                                "text_encoder2_path": new_te2,
+                                "dit_path": new_dit,
+                                "output_name": new_out_nm,
+                                "network_dim": new_dim,
+                                "learning_rate": new_lr,
+                                "optimizer_type": new_optimizer_type,
+                                "optimizer_args": new_optimizer_args,
+                                "lr_scheduler": new_lr_scheduler,
+                                "lr_scheduler_args": new_lr_scheduler_args,
+                                "network_alpha": new_network_alpha,
+                                "lr_warmup_steps": new_lr_warmup_steps,
+                                "seed": new_seed,
+                                "max_grad_norm": new_max_grad_norm,
+                                "num_epochs": new_epochs,
+                                "save_every_n_epochs": new_save_n,
+                                "discrete_flow_shift": new_flow,
+                                "block_swap": new_swap,
+                                "use_pinned_memory_for_block_swap": new_use_pinned_memory_for_block_swap,
+                                "mixed_precision": new_prec,
+                                "gradient_checkpointing": new_grad_cp,
+                                "fp8_scaled": new_fp8_s,
+                                "fp8_llm": new_fp8_l,
+                                "additional_args": new_add_args,
+                                "sample_images": new_sample_enable,
+                                "sample_every_n": new_sample_every_n,
+                                "sample_output_dir": new_sample_output_dir,
+                                "sample_prompt": new_sample_prompt,
+                                "sample_negative_prompt": new_sample_negative,
+                                "sample_w": new_sample_w,
+                                "sample_h": new_sample_h,
+                                "input_lora": new_in_lora,
+                                "output_comfy_lora": new_out_comfy,
+                            }
+                            return (msg, *pack_updates(INIT_OUTPUT_KEYS, updates))
+                        except Exception as e:
+                            return (f"Error initializing project: {str(e)}", *pack_updates(INIT_OUTPUT_KEYS, {}))
+        
+                    def generate_config(
+                        project_path,
+                        w,
+                        h,
+                        batch,
+                        model_val,
+                        vram_val,
+                        comfy_val,
+                        vae_val,
+                        te1_val,
+                        te2_val,
+                        control_dir,
+                        control_w,
+                        control_h,
+                        no_resize_ctrl,
+                        image_dir_val,
+                        cache_dir_val,
+                        caption_ext_val,
+                        num_repeats_val,
+                        enable_bucket_val,
+                        bucket_no_upscale_val,
+                    ):
+                        if not project_path:
+                            return "Error: Project directory not specified.\nエラー: プロジェクトディレクトリが指定されていません。", ""
+        
+                        # Save project settings first
+                        save_project_settings(
+                            project_path,
+                            model_arch=model_val,
+                            vram_size=vram_val,
+                            comfy_models_dir=comfy_val,
+                            resolution_w=w,
+                            resolution_h=h,
+                            batch_size=batch,
+                            vae_path=vae_val,
+                            text_encoder1_path=te1_val,
+                            text_encoder2_path=te2_val,
+                            control_directory=control_dir,
+                            control_resolution_w=control_w,
+                            control_resolution_h=control_h,
+                            no_resize_control=no_resize_ctrl,
+                            image_directory=image_dir_val,
+                            cache_directory=cache_dir_val,
+                            caption_extension=caption_ext_val,
+                            num_repeats=num_repeats_val,
+                            enable_bucket=enable_bucket_val,
+                            bucket_no_upscale=bucket_no_upscale_val,
+                        )
+        
+                        # Normalize paths
+                        project_path = os.path.abspath(project_path)
+                        image_dir_raw = (image_dir_val or "").strip()
+                        cache_dir_raw = (cache_dir_val or "").strip()
+                        if not image_dir_raw:
+                            image_dir_raw = os.path.join(project_path, "training")
+                        if not cache_dir_raw:
+                            cache_dir_raw = os.path.join(project_path, "cache")
+        
+                        image_dir = image_dir_raw.replace("\\", "/")
+                        cache_dir = cache_dir_raw.replace("\\", "/")
+        
+                        caption_ext = (caption_ext_val or ".txt").strip()
+                        if not caption_ext:
+                            caption_ext = ".txt"
+                        try:
+                            num_repeats_int = int(num_repeats_val)
+                        except Exception:
+                            num_repeats_int = 1
+        
+                        toml_content = textwrap.dedent(
+                            f"""\
+                            # Auto-generated by Musubi Tuner GUI
 
-                except Exception as e:
-                    yield f"Error executing command / コマンドの実行中にエラーが発生しました: {str(e)}"
+                            [general]
+                            resolution = [{int(w)}, {int(h)}]
+                            caption_extension = "{caption_ext}"
+                            batch_size = {int(batch)}
+                            enable_bucket = {str(bool(enable_bucket_val)).lower()}
+                            bucket_no_upscale = {str(bool(bucket_no_upscale_val)).lower()}
 
-            def cache_latents(project_path, vae_path_val, te1, te2, model, comfy, w, h, batch, vram_val):
-                if not project_path:
-                    yield "Error: Project directory not set. / プロジェクトディレクトリが設定されていません。"
-                    return
-                model = _normalize_model_label(model)
-
-                # Save settings first
-                save_project_settings(
-                    project_path,
-                    model_arch=model,
-                    comfy_models_dir=comfy,
-                    resolution_w=w,
-                    resolution_h=h,
-                    batch_size=batch,
-                    vae_path=vae_path_val,
-                    text_encoder1_path=te1,
-                    text_encoder2_path=te2,
-                )
-
-                if not vae_path_val:
-                    yield "Error: VAE path not set. / VAEのパスが設定されていません。"
-                    return
-
-                if not os.path.exists(vae_path_val):
-                    yield f"Error: VAE model not found at / 指定されたパスにVAEモデルが見つかりません: {vae_path_val}"
-                    return
-
-                config_path = os.path.join(project_path, "dataset_config.toml")
-                if not os.path.exists(config_path):
-                    yield f"Error: dataset_config.toml not found in {project_path}. Please generate it first. / dataset_config.tomlが {project_path} に見つかりません。先に設定ファイルを生成してください。"
-                    return
-
-                script_name = "zimage_cache_latents.py"
-                if model == "Qwen-Image":
-                    script_name = "qwen_image_cache_latents.py"
-                elif model.startswith("Flux.2"):
-                     script_name = "flux_2_cache_latents.py"
-
-                script_path = os.path.join("src", "musubi_tuner", script_name)
-
-                cmd = [sys.executable, script_path, "--dataset_config", config_path, "--vae", vae_path_val]
-
-                # Placeholder for argument modification
-                if _is_zimage(model):
-                    pass
-                elif model == "Qwen-Image":
-                    pass
-                elif model == "Flux.2 Dev":
-                    cmd.extend(["--model_version", "dev"])
-                elif model == "Flux.2 Klein (4B)":
-                    cmd.extend(["--model_version", "klein-4b"])
-                elif model == "Flux.2 Klein Base (4B)":
-                    cmd.extend(["--model_version", "klein-base-4b"])
-
-                command_str = " ".join(cmd)
-                yield f"Starting Latent Caching. Please wait for the first log to appear. / Latentのキャッシュを開始します。最初のログが表示されるまでにしばらくかかります。\nCommand: {command_str}\n\n"
-
-                yield from run_command(command_str)
-
-            def cache_text_encoder(
-                project_path, te1_path_val, te2_path_val, vae, model, comfy, w, h, batch, vram_val, fp8_text_encoder
-            ):
-                if not project_path:
-                    yield "Error: Project directory not set. / プロジェクトディレクトリが設定されていません。"
-                    return
-                model = _normalize_model_label(model)
-
-                # Save settings first
-                save_project_settings(
-                    project_path,
-                    model_arch=model,
-                    comfy_models_dir=comfy,
-                    resolution_w=w,
-                    resolution_h=h,
-                    batch_size=batch,
-                    vae_path=vae,
-                    text_encoder1_path=te1_path_val,
-                    text_encoder2_path=te2_path_val,
-                )
-
-                if not te1_path_val:
-                    yield "Error: Text Encoder 1 path not set. / Text Encoder 1のパスが設定されていません。"
-                    return
-
-                if not os.path.exists(te1_path_val):
-                    yield f"Error: Text Encoder 1 model not found at / 指定されたパスにText Encoder 1モデルが見つかりません: {te1_path_val}"
-                    return
-
-                # Z-Image only uses te1 for now, but keeping te2 in signature if needed later or for other models
-
-                config_path = os.path.join(project_path, "dataset_config.toml")
-                if not os.path.exists(config_path):
-                    yield f"Error: dataset_config.toml not found in {project_path}. Please generate it first. / dataset_config.tomlが {project_path} に見つかりません。先に設定ファイルを生成してください。"
-                    return
-
-                script_name = "zimage_cache_text_encoder_outputs.py"
-                if model == "Qwen-Image":
-                    script_name = "qwen_image_cache_text_encoder_outputs.py"
-                elif model.startswith("Flux.2"):
-                    script_name = "flux_2_cache_text_encoder_outputs.py"
-
-                script_path = os.path.join("src", "musubi_tuner", script_name)
-
-                cmd = [
-                    sys.executable,
-                    script_path,
-                    "--dataset_config",
-                    config_path,
-                    "--text_encoder",
-                    te1_path_val,
-                    "--batch_size",
-                    "1",  # Conservative default
-                ]
-
-                # Model-specific argument modification
-                if _is_zimage(model):
-                    pass
-                elif model == "Qwen-Image":
-                    # Add --fp8_vl for low VRAM (16GB or less)
-                    if vram_val in ["12", "16"]:
-                        cmd.append("--fp8_vl")
-                elif model == "Flux.2 Dev":
-                    cmd.extend(["--model_version", "dev"])
-                elif model == "Flux.2 Klein (4B)":
-                    cmd.extend(["--model_version", "klein-4b"])
-                elif model == "Flux.2 Klein Base (4B)":
-                    cmd.extend(["--model_version", "klein-base-4b"])
-
-                if model.startswith("Flux.2") and model != "Flux.2 Dev" and fp8_text_encoder:
-                    cmd.append("--fp8_text_encoder")
-
-                command_str = " ".join(cmd)
-                yield f"Starting Text Encoder Caching. Please wait for the first log to appear. / Text Encoderのキャッシュを開始します。最初のログが表示されるまでにしばらくかかります。\nCommand: {command_str}\n\n"
-
-                yield from run_command(command_str)
-
-        with gr.Accordion(i18n("acc_preprocessing"), open=False, elem_classes=["section-card", "card-preprocess"]):
-            gr.Markdown(i18n("desc_preprocessing"))
-            with gr.Row():
-                set_preprocessing_defaults_btn = gr.Button(i18n("btn_set_paths"))
-                auto_detect_paths_btn = gr.Button(i18n("btn_auto_detect_paths"))
-            auto_detect_status = gr.Markdown("")
-            with gr.Row(elem_classes=["path-row", "env-row"]):
-                vae_path = gr.Textbox(label=i18n("lbl_vae_path"), placeholder=i18n("ph_vae_path"), max_lines=1, scale=8)
-                browse_vae = gr.Button(i18n("btn_browse"), scale=1)
-            with gr.Row(elem_classes=["path-row", "env-row"]):
-                text_encoder1_path = gr.Textbox(label=i18n("lbl_te1_path"), placeholder=i18n("ph_te1_path"), max_lines=1, scale=8)
-                browse_te1 = gr.Button(i18n("btn_browse"), scale=1)
-            with gr.Row(elem_classes=["path-row", "env-row"]):
-                text_encoder2_path = gr.Textbox(label=i18n("lbl_te2_path"), placeholder=i18n("ph_te2_path"), max_lines=1, scale=8)
-                browse_te2 = gr.Button(i18n("btn_browse"), scale=1)
-
-            with gr.Row():
-                cache_latents_btn = gr.Button(i18n("btn_cache_latents"))
-                cache_text_btn = gr.Button(i18n("btn_cache_text"))
-
-            # Simple output area for caching logs
-            caching_output = gr.Textbox(label=i18n("lbl_cache_log"), lines=10, interactive=False)
-
-        with gr.Accordion(i18n("acc_training"), open=False, elem_classes=["section-card", "card-training"]):
-            gr.Markdown(i18n("desc_training_basic"))
-            training_model_info = gr.Markdown(i18n("desc_training_flux2"))
-
-            with gr.Row():
-                set_training_defaults_btn = gr.Button(i18n("btn_rec_params"))
-            with gr.Row(elem_classes=["path-row", "env-row"]):
-                dit_path = gr.Textbox(label=i18n("lbl_dit_path"), placeholder=i18n("ph_dit_path"), max_lines=1, scale=8)
-                browse_dit = gr.Button(i18n("btn_browse"), scale=1)
-
-            with gr.Row():
-                output_name = gr.Textbox(label=i18n("lbl_output_name"), value="my_lora", max_lines=1)
-
-            with gr.Group():
-                gr.Markdown(i18n("header_basic_params"))
-                with gr.Row():
-                    network_dim = gr.Number(label=i18n("lbl_dim"), value=4)
-                    learning_rate = gr.Number(label=i18n("lbl_lr"), value=1e-4)
-                    optimizer_type = gr.Dropdown(
-                        label=i18n("lbl_optimizer"),
-                        choices=["adamw8bit", "adamw", "adafactor"],
-                        value="adamw8bit",
-                    )
-                    optimizer_args = gr.Textbox(
-                        label=i18n("lbl_optimizer_args"), placeholder="e.g. weight_decay=0.01"
-                    )
-                    lr_scheduler = gr.Dropdown(
-                        label=i18n("lbl_lr_scheduler"),
-                        choices=[
-                            "constant",
-                            "linear",
-                            "cosine",
-                            "cosine_with_restarts",
-                            "polynomial",
-                            "constant_with_warmup",
-                            "adafactor",
-                            "rex",
-                        ],
-                        value="constant",
-                    )
-                    lr_scheduler_args = gr.Textbox(
-                        label=i18n("lbl_lr_scheduler_args"), placeholder="e.g. num_cycles=1 power=1.0"
-                    )
-                with gr.Row():
-                    network_alpha = gr.Number(label=i18n("lbl_network_alpha"), value=1)
-                    lr_warmup_steps = gr.Number(label=i18n("lbl_lr_warmup_steps"), value=0, precision=0)
-                    seed = gr.Number(label=i18n("lbl_seed"), value=42, precision=0)
-                    max_grad_norm = gr.Number(label=i18n("lbl_max_grad_norm"), value=1.0)
-                    num_epochs = gr.Number(label=i18n("lbl_epochs"), value=16)
-                    save_every_n_epochs = gr.Number(label=i18n("lbl_save_every"), value=1)
-
-            with gr.Group():
-                with gr.Row():
-                    discrete_flow_shift = gr.Number(label=i18n("lbl_flow_shift"), value=1.0)
-                    block_swap = gr.Slider(label=i18n("lbl_block_swap"), minimum=0, maximum=60, step=1, value=0)
-                    use_pinned_memory_for_block_swap = gr.Checkbox(
-                        label=i18n("lbl_use_pinned_memory_for_block_swap"),
-                        value=False,
-                    )
-
-                with gr.Accordion(i18n("accordion_advanced"), open=False):
-                    gr.Markdown(i18n("desc_training_detailed"))
-
-                with gr.Row():
-                    mixed_precision = gr.Dropdown(label=i18n("lbl_mixed_precision"), choices=["bf16", "fp16", "no"], value="bf16")
-                    gradient_checkpointing = gr.Checkbox(label=i18n("lbl_grad_cp"), value=True)
-
-                with gr.Row():
-                    fp8_scaled = gr.Checkbox(label=i18n("lbl_fp8_scaled"), value=True)
-                    fp8_llm = gr.Checkbox(label=i18n("lbl_fp8_llm"), value=initial_fp8_llm)
-
-            with gr.Row():
-                est_vram_btn = gr.Button(i18n("btn_est_vram"))
-            vram_estimate = gr.Markdown("")
-
-            with gr.Group():
-                gr.Markdown(i18n("header_sample_images"))
-                sample_images = gr.Checkbox(label=i18n("lbl_enable_sample"), value=False)
-                with gr.Row():
-                    sample_prompt = gr.Textbox(label=i18n("lbl_sample_prompt"), placeholder=i18n("ph_sample_prompt"))
-                with gr.Row():
-                    sample_negative_prompt = gr.Textbox(
-                        label=i18n("lbl_sample_negative_prompt"),
-                        placeholder=i18n("ph_sample_negative_prompt"),
-                    )
-                with gr.Row():
-                    sample_w = gr.Number(label=i18n("lbl_sample_w"), value=1024, precision=0)
-                    sample_h = gr.Number(label=i18n("lbl_sample_h"), value=1024, precision=0)
-                    sample_every_n = gr.Number(label=i18n("lbl_sample_every_n"), value=1, precision=0)
-                with gr.Row(elem_classes=["path-row", "env-row"]):
-                    sample_output_dir = gr.Textbox(
-                        label=i18n("lbl_sample_output_dir"),
-                        placeholder=i18n("ph_sample_output_dir"),
-                        scale=8,
-                    )
-                    browse_sample_out = gr.Button(i18n("btn_browse"), scale=1)
-
-            with gr.Accordion(i18n("accordion_additional"), open=False):
-                gr.Markdown(i18n("desc_additional_args"))
-                additional_args = gr.Textbox(label=i18n("lbl_additional_args"), placeholder=i18n("ph_additional_args"))
-
-            with gr.Row(elem_classes=["path-row", "env-row"]):
-                resume_path = gr.Textbox(label=i18n("lbl_resume"), placeholder=i18n("ph_resume"), scale=8)
-                browse_resume = gr.Button(i18n("btn_browse"), scale=1)
-
-            training_status = gr.Markdown("")
-            with gr.Row():
-                start_training_btn = gr.Button(i18n("btn_start_training"), variant="primary", scale=2)
-                tensorboard_btn = gr.Button(i18n("btn_tensorboard"), scale=1)
-
-        with gr.Accordion(i18n("acc_post_processing"), open=False, elem_classes=["section-card", "card-post"]):
-            gr.Markdown(i18n("desc_post_proc"))
-            with gr.Row():
-                set_post_proc_defaults_btn = gr.Button(i18n("btn_set_paths"))
-            with gr.Row(elem_classes=["path-row", "env-row"]):
-                input_lora = gr.Textbox(label=i18n("lbl_input_lora"), placeholder=i18n("ph_input_lora"), max_lines=1, scale=8)
-                browse_input_lora = gr.Button(i18n("btn_browse"), scale=1)
-            with gr.Row(elem_classes=["path-row", "env-row"]):
-                output_comfy_lora = gr.Textbox(label=i18n("lbl_output_comfy"), placeholder=i18n("ph_output_comfy"), max_lines=1, scale=8)
-                browse_output_lora = gr.Button(i18n("btn_browse"), scale=1)
-
-            convert_btn = gr.Button(i18n("btn_convert"))
-            conversion_log = gr.Textbox(label=i18n("lbl_conversion_log"), lines=5, interactive=False)
-
+                            [[datasets]]
+                            image_directory = "{image_dir}"
+                            cache_directory = "{cache_dir}"
+                            num_repeats = {num_repeats_int}
+                            """
+                        )
+                        control_dir = (control_dir or "").strip()
+                        if control_dir:
+                            safe_control_dir = control_dir.replace("\\", "/")
+                            toml_content += f'control_directory = "{safe_control_dir}"\n'
+                            if no_resize_ctrl:
+                                toml_content += "no_resize_control = true\n"
+                            try:
+                                control_w_int = int(control_w)
+                                control_h_int = int(control_h)
+                            except Exception:
+                                control_w_int = 0
+                                control_h_int = 0
+                            if control_w_int > 0 and control_h_int > 0:
+                                toml_content += f"control_resolution = [{control_w_int}, {control_h_int}]\n"
+                        try:
+                            config_path = os.path.join(project_path, "dataset_config.toml")
+                            with open(config_path, "w", encoding="utf-8") as f:
+                                f.write(toml_content)
+                            return f"Successfully generated config at / 設定ファイルが作成されました: {config_path}", toml_content
+                        except Exception as e:
+                            return f"Error generating config / 設定ファイルの生成に失敗しました: {str(e)}", ""
+        
+                    def validate_models_dir(path):
+                        if not path:
+                            return "Please enter a ComfyUI models directory. / ComfyUIのmodelsディレクトリを入力してください。"
+        
+                        required_subdirs = ["diffusion_models", "vae", "text_encoders"]
+                        missing = []
+                        for d in required_subdirs:
+                            if not os.path.exists(os.path.join(path, d)):
+                                missing.append(d)
+        
+                        if missing:
+                            return f"Error: Missing subdirectories in models folder / modelsフォルダに以下のサブディレクトリが見つかりません: {', '.join(missing)}"
+        
+                        return "Valid ComfyUI models directory structure found / 有効なComfyUI modelsディレクトリ構造が見つかりました。"
+        
+                    def set_recommended_settings(project_path, model_arch, vram_val):
+                        model_arch = _normalize_model_label(model_arch)
+                        w, h = config_manager.get_resolution(model_arch)
+                        recommended_batch_size = config_manager.get_batch_size(model_arch, vram_val)
+        
+                        if project_path:
+                            save_project_settings(project_path, resolution_w=w, resolution_h=h, batch_size=recommended_batch_size)
+                        return w, h, recommended_batch_size
+        
+                    def set_preprocessing_defaults(project_path, comfy_models_dir, model_arch):
+                        model_arch = _normalize_model_label(model_arch)
+                        if not comfy_models_dir:
+                            return gr.update(), gr.update(), gr.update()
+        
+                        vae_default, te1_default, te2_default = config_manager.get_preprocessing_paths(model_arch, comfy_models_dir)
+                        if not te2_default:
+                            te2_default = ""  # Ensure empty string for text input
+                        if model_arch.startswith("Flux.2") and te1_default and not os.path.exists(te1_default):
+                            # Flux.2 text encoder weights are often split; avoid auto-filling a bad path.
+                            te1_default = ""
+        
+                        if project_path:
+                            save_project_settings(
+                                project_path, vae_path=vae_default, text_encoder1_path=te1_default, text_encoder2_path=te2_default
+                            )
+        
+                        return vae_default, te1_default, te2_default
+        
+                    def auto_detect_paths(project_path, comfy_models_dir, model_arch):
+                        model_arch = _normalize_model_label(model_arch)
+                        if not comfy_models_dir:
+                            return gr.update(), gr.update(), gr.update(), gr.update(), i18n("msg_auto_detect_fail").format(
+                                e="ComfyUI models directory not set"
+                            )
+        
+                        base_dir = os.path.abspath(comfy_models_dir)
+                        diffusion_dir = os.path.join(base_dir, "diffusion_models")
+                        vae_dir = os.path.join(base_dir, "vae")
+                        te_dir = os.path.join(base_dir, "text_encoders")
+        
+                        def find_first(search_dir, patterns):
+                            if not search_dir or not os.path.exists(search_dir):
+                                return ""
+                            for pattern in patterns:
+                                candidates = [
+                                    os.path.join(search_dir, pattern),
+                                    os.path.join(search_dir, "**", pattern),
+                                ]
+                                for candidate in candidates:
+                                    matches = glob.glob(candidate, recursive=True)
+                                    matches.sort()
+                                    if matches:
+                                        return matches[0]
+                            return ""
+        
+                        if model_arch == "Flux.2 Dev":
+                            dit_patterns = [
+                                "flux2-dev.safetensors",
+                                "flux2_dev.safetensors",
+                                "flux-2-dev.safetensors",
+                                "flux_2_dev.safetensors",
+                                "*flux2*dev*.safetensors",
+                                "*flux-2*dev*.safetensors",
+                                "*flux_2*dev*.safetensors",
+                            ]
+                            vae_patterns = ["ae.safetensors"]
+                            te_patterns = [
+                                "*mistral*00001-of-*.safetensors",
+                                "*mistral*00001*.safetensors",
+                                "*mistral*.safetensors",
+                            ]
+                        elif model_arch == "Flux.2 Klein (4B)":
+                            dit_patterns = [
+                                "flux2-klein-4b.safetensors",
+                                "flux2_klein_4b.safetensors",
+                                "flux-2-klein-4b.safetensors",
+                                "flux_2_klein_4b.safetensors",
+                                "*flux2*klein*4b*.safetensors",
+                                "*flux-2*klein*4b*.safetensors",
+                                "*flux_2*klein*4b*.safetensors",
+                            ]
+                            vae_patterns = ["ae.safetensors"]
+                            te_patterns = [
+                                "qwen_3_4b.safetensors",
+                                "*qwen*3*4b*00001-of-*.safetensors",
+                                "*qwen*3*4b*.safetensors",
+                                "*qwen*4b*00001-of-*.safetensors",
+                                "*qwen*4b*.safetensors",
+                            ]
+                        elif model_arch == "Flux.2 Klein Base (4B)":
+                            dit_patterns = [
+                                "flux2-klein-base-4b.safetensors",
+                                "flux2_klein_base_4b.safetensors",
+                                "flux-2-klein-base-4b.safetensors",
+                                "flux_2_klein_base_4b.safetensors",
+                                "*flux2*klein*base*4b*.safetensors",
+                                "*flux-2*klein*base*4b*.safetensors",
+                                "*flux_2*klein*base*4b*.safetensors",
+                            ]
+                            vae_patterns = ["ae.safetensors"]
+                            te_patterns = [
+                                "qwen_3_4b.safetensors",
+                                "*qwen*3*4b*00001-of-*.safetensors",
+                                "*qwen*3*4b*.safetensors",
+                                "*qwen*4b*00001-of-*.safetensors",
+                                "*qwen*4b*.safetensors",
+                            ]
+                        elif model_arch == "Qwen-Image":
+                            dit_patterns = ["qwen_image_bf16.safetensors", "*qwen*image*bf16*.safetensors"]
+                            vae_patterns = ["qwen_image_vae.safetensors", "*qwen*image*vae*.safetensors"]
+                            te_patterns = ["qwen_2.5_vl_7b.safetensors", "*qwen*2.5*vl*7b*.safetensors", "*qwen*vl*7b*.safetensors"]
+                        else:  # Z-Image (default)
+                            dit_patterns = [
+                                "z_image_de_turbo_v1_bf16.safetensors",
+                                "*z*image*de*turbo*bf16*.safetensors",
+                                "*z*image*de*turbo*.safetensors",
+                            ]
+                            vae_patterns = ["ae.safetensors"]
+                            te_patterns = ["qwen_3_4b.safetensors", "*qwen*3*4b*.safetensors"]
+        
+                        vae_found = find_first(vae_dir, vae_patterns)
+                        te1_found = find_first(te_dir, te_patterns)
+                        dit_found = find_first(diffusion_dir, dit_patterns)
+        
+                        # Save settings if project path is provided
+                        if project_path:
+                            updates = {}
+                            if vae_found:
+                                updates["vae_path"] = vae_found
+                            if te1_found:
+                                updates["text_encoder1_path"] = te1_found
+                            if dit_found:
+                                updates["dit_path"] = dit_found
+                            if updates:
+                                save_project_settings(project_path, **updates)
+        
+                        # Build status message
+                        label_vae = i18n("lbl_vae_path")
+                        label_te1 = i18n("lbl_te1_path")
+                        label_dit = i18n("lbl_dit_path")
+        
+                        found_lines = []
+                        missing_labels = []
+                        if vae_found:
+                            found_lines.append(f"- **{label_vae}**: `{vae_found}`")
+                        else:
+                            missing_labels.append(label_vae)
+                        if te1_found:
+                            found_lines.append(f"- **{label_te1}**: `{te1_found}`")
+                        else:
+                            missing_labels.append(label_te1)
+                        if dit_found:
+                            found_lines.append(f"- **{label_dit}**: `{dit_found}`")
+                        else:
+                            missing_labels.append(label_dit)
+        
+                        lines = [f"**{i18n('msg_auto_detect_title')}**"]
+                        if found_lines:
+                            lines.append(f"{i18n('msg_auto_detect_found')}:")
+                            lines.extend(found_lines)
+                        if missing_labels:
+                            lines.append(f"{i18n('msg_auto_detect_missing')}: {', '.join(missing_labels)}")
+                        if model_arch.startswith("Flux.2") and not te1_found:
+                            lines.append(i18n("msg_auto_detect_note_split"))
+        
+                        status_msg = "\n".join(lines)
+        
+                        return (
+                            gr.update(value=vae_found) if vae_found else gr.update(),
+                            gr.update(value=te1_found) if te1_found else gr.update(),
+                            gr.update(),
+                            gr.update(value=dit_found) if dit_found else gr.update(),
+                            status_msg,
+                        )
+        
+                    def set_training_defaults(project_path, comfy_models_dir, model_arch, vram_val):
+                        model_arch = _normalize_model_label(model_arch)
+                        # Get number of images from project_path to adjust num_epochs later
+                        cache_dir = os.path.join(project_path, "cache")
+                        if model_arch == "Qwen-Image":
+                            arch_tag = "qwen_image"
+                        elif model_arch.startswith("Flux.2"):
+                            arch_tag = "flux_2"
+                        else:
+                            arch_tag = "z_image"
+                        if os.path.exists(cache_dir):
+                            all_files = glob.glob(os.path.join(cache_dir, f"*_{arch_tag}*.safetensors"))
+                            latent_files = [f for f in all_files if not f.endswith("_te.safetensors")]
+                            num_images = len(latent_files)
+                        else:
+                            num_images = 0
+        
+                        # Get training defaults from config manager
+                        defaults = config_manager.get_training_defaults(model_arch, vram_val, comfy_models_dir)
+        
+                        # Adjust num_epochs based on number of images (simple heuristic)
+                        default_num_steps = defaults.get("default_num_steps", 1000)
+                        if num_images > 0:
+                            adjusted_epochs = max(1, int((default_num_steps / num_images)))
+                        else:
+                            adjusted_epochs = 16  # Fallback default
+                        sample_every_n_epochs = (adjusted_epochs // 4) if adjusted_epochs >= 4 else 1
+        
+                        dit_default = defaults.get("dit_path", "")
+                        dim = defaults.get("network_dim", 4)
+                        lr = defaults.get("learning_rate", 1e-4)
+                        optimizer_type = defaults.get("optimizer_type", "adamw8bit")
+                        optimizer_args = defaults.get("optimizer_args", "")
+                        network_alpha = defaults.get("network_alpha", 1)
+                        lr_warmup_steps = defaults.get("lr_warmup_steps", 0)
+                        seed = defaults.get("seed", 42)
+                        max_grad_norm = defaults.get("max_grad_norm", 1.0)
+                        epochs = adjusted_epochs
+                        save_n = defaults.get("save_every_n_epochs", 1)
+                        flow = defaults.get("discrete_flow_shift", 2.0)
+                        swap = defaults.get("block_swap", 0)
+                        use_pinned_memory_for_block_swap = defaults.get("use_pinned_memory_for_block_swap", False)
+                        prec = defaults.get("mixed_precision", "bf16")
+                        grad_cp = defaults.get("gradient_checkpointing", True)
+                        fp8_s = defaults.get("fp8_scaled", True)
+                        fp8_l = defaults.get("fp8_llm", False)
+        
+                        sample_w = config_manager.get_resolution(model_arch)[0]
+                        sample_h = config_manager.get_resolution(model_arch)[1]
+                        sample_out = ""
+        
+                        if project_path:
+                            save_project_settings(
+                                project_path,
+                                dit_path=dit_default,
+                                network_dim=dim,
+                                learning_rate=lr,
+                                optimizer_type=optimizer_type,
+                                optimizer_args=optimizer_args,
+                                network_alpha=network_alpha,
+                                lr_warmup_steps=lr_warmup_steps,
+                                seed=seed,
+                                max_grad_norm=max_grad_norm,
+                                num_epochs=epochs,
+                                save_every_n_epochs=save_n,
+                                discrete_flow_shift=flow,
+                                block_swap=swap,
+                                use_pinned_memory_for_block_swap=use_pinned_memory_for_block_swap,
+                                mixed_precision=prec,
+                                gradient_checkpointing=grad_cp,
+                                fp8_scaled=fp8_s,
+                                fp8_llm=fp8_l,
+                                sample_every_n_epochs=sample_every_n_epochs,
+                                sample_w=sample_w,
+                                sample_h=sample_h,
+                                sample_output_dir=sample_out,
+                            )
+        
+                        updates = {
+                            "dit_path": dit_default,
+                            "network_dim": dim,
+                            "learning_rate": lr,
+                            "optimizer_type": optimizer_type,
+                            "optimizer_args": optimizer_args,
+                            "network_alpha": network_alpha,
+                            "lr_warmup_steps": lr_warmup_steps,
+                            "seed": seed,
+                            "max_grad_norm": max_grad_norm,
+                            "num_epochs": epochs,
+                            "save_every_n_epochs": save_n,
+                            "discrete_flow_shift": flow,
+                            "block_swap": swap,
+                            "use_pinned_memory_for_block_swap": use_pinned_memory_for_block_swap,
+                            "mixed_precision": prec,
+                            "gradient_checkpointing": grad_cp,
+                            "fp8_scaled": fp8_s,
+                            "fp8_llm": fp8_l,
+                            "sample_every_n": sample_every_n_epochs,
+                            "sample_w": sample_w,
+                            "sample_h": sample_h,
+                            "sample_output_dir": sample_out,
+                        }
+                        return pack_updates(TRAINING_DEFAULT_KEYS, updates)
+        
+                    def estimate_vram(model_arch, w, h, batch, prec, grad_cp, fp8_s, fp8_l, swap):
+                        model_arch = _normalize_model_label(model_arch)
+                        try:
+                            w = int(w)
+                            h = int(h)
+                            batch = int(batch)
+                        except Exception:
+                            return i18n("msg_est_vram_note")
+        
+                        base_map = {
+                            "Z-Image": 8.0,
+                            "Qwen-Image": 18.0,
+                            "Flux.2 Dev": 18.0,
+                            "Flux.2 Klein (4B)": 12.0,
+                            "Flux.2 Klein Base (4B)": 14.0,
+                        }
+                        base_vram = base_map.get(model_arch, 12.0)
+        
+                        scale = (w * h) / (1024 * 1024) * max(1, batch)
+                        vram = base_vram * scale
+        
+                        if prec == "no":
+                            vram *= 1.6
+                        elif prec == "fp16":
+                            vram *= 0.95
+        
+                        if grad_cp:
+                            vram *= 0.85
+        
+                        if fp8_s:
+                            vram *= 0.85
+        
+                        if fp8_l:
+                            vram *= 0.9
+        
+                        try:
+                            swap_val = int(swap)
+                        except Exception:
+                            swap_val = 0
+        
+                        if swap_val > 0:
+                            max_swap_map = {
+                                "Z-Image": 28,
+                                "Qwen-Image": 58,
+                                "Flux.2 Dev": 29,
+                                "Flux.2 Klein (4B)": 13,
+                                "Flux.2 Klein Base (4B)": 13,
+                            }
+                            max_swap = max_swap_map.get(model_arch, 30)
+                            swap_ratio = min(1.0, swap_val / max_swap)
+                            vram *= (1.0 - 0.4 * swap_ratio)
+        
+                        vram = max(1.0, vram)
+                        low = vram * 0.8
+                        high = vram * 1.2
+        
+                        return (
+                            f"**{i18n('msg_est_vram_title')}**: ~{low:.1f}–{high:.1f} GB\n\n"
+                            f"{i18n('msg_est_vram_note')}"
+                        )
+        
+                    def _prefer_auto(auto_val, fallback):
+                        if isinstance(auto_val, dict):
+                            if auto_val.get("value"):
+                                return auto_val
+                            return fallback
+                        if isinstance(auto_val, str) and auto_val:
+                            return auto_val
+                        return fallback
+        
+                    def quick_setup(project_path, model_arch, vram_val, comfy_models_dir):
+                        w, h, batch = set_recommended_settings(project_path, model_arch, vram_val)
+        
+                        vae_default, te1_default, te2_default = set_preprocessing_defaults(project_path, comfy_models_dir, model_arch)
+                        (
+                            dit_default,
+                            dim,
+                            lr,
+                            optimizer_type,
+                            optimizer_args,
+                            network_alpha,
+                            lr_warmup_steps,
+                            seed,
+                            max_grad_norm,
+                            epochs,
+                            save_n,
+                            flow,
+                            swap,
+                            use_pinned_memory_for_block_swap,
+                            prec,
+                            grad_cp,
+                            fp8_s,
+                            fp8_l,
+                            sample_every_n_epochs,
+                            sample_w_default,
+                            sample_h_default,
+                            sample_out,
+                        ) = set_training_defaults(project_path, comfy_models_dir, model_arch, vram_val)
+        
+                        auto_vae = gr.update()
+                        auto_te1 = gr.update()
+                        auto_te2 = gr.update()
+                        auto_dit = gr.update()
+                        auto_status = ""
+                        if comfy_models_dir:
+                            auto_vae, auto_te1, auto_te2, auto_dit, auto_status = auto_detect_paths(
+                                project_path, comfy_models_dir, model_arch
+                            )
+        
+                        status_msg = i18n("msg_quick_setup_done")
+                        if auto_status:
+                            status_msg = f"{status_msg}\n\n{auto_status}"
+        
+                        updates = {
+                            "resolution_w": w,
+                            "resolution_h": h,
+                            "batch_size": batch,
+                            "vae_path": _prefer_auto(auto_vae, vae_default),
+                            "text_encoder1_path": _prefer_auto(auto_te1, te1_default),
+                            "text_encoder2_path": _prefer_auto(auto_te2, te2_default),
+                            "dit_path": _prefer_auto(auto_dit, dit_default),
+                            "network_dim": dim,
+                            "learning_rate": lr,
+                            "optimizer_type": optimizer_type,
+                            "optimizer_args": optimizer_args,
+                            "network_alpha": network_alpha,
+                            "lr_warmup_steps": lr_warmup_steps,
+                            "seed": seed,
+                            "max_grad_norm": max_grad_norm,
+                            "num_epochs": epochs,
+                            "save_every_n_epochs": save_n,
+                            "discrete_flow_shift": flow,
+                            "block_swap": swap,
+                            "use_pinned_memory_for_block_swap": use_pinned_memory_for_block_swap,
+                            "mixed_precision": prec,
+                            "gradient_checkpointing": grad_cp,
+                            "fp8_scaled": fp8_s,
+                            "fp8_llm": fp8_l,
+                            "sample_every_n": sample_every_n_epochs,
+                            "sample_w": sample_w_default,
+                            "sample_h": sample_h_default,
+                            "sample_output_dir": sample_out,
+                            "training_model_info": update_model_info(model_arch),
+                            "quick_status": status_msg,
+                        }
+                        return pack_updates(QUICK_SETUP_OUTPUT_KEYS, updates)
+        
+                    def check_missing(
+                        project_path,
+                        comfy_models_dir,
+                        vae_val,
+                        te1_val,
+                        dit_val,
+                    ):
+                        missing = []
+                        if not project_path:
+                            missing.append(i18n("lbl_proj_dir"))
+                        else:
+                            config_path = os.path.join(project_path, "dataset_config.toml")
+                            if not os.path.exists(config_path):
+                                missing.append("dataset_config.toml")
+                        if not comfy_models_dir:
+                            missing.append(i18n("lbl_comfy_dir"))
+                        if not vae_val:
+                            missing.append(i18n("lbl_vae_path"))
+                        if not te1_val:
+                            missing.append(i18n("lbl_te1_path"))
+                        if not dit_val:
+                            missing.append(i18n("lbl_dit_path"))
+        
+                        if missing:
+                            return f"**{i18n('msg_missing_title')}**\n- " + "\n- ".join(missing)
+                        return "OK"
+        
+                    def set_post_processing_defaults(project_path, output_nm):
+                        if not project_path or not output_nm:
+                            return gr.update(), gr.update()
+        
+                        models_dir = os.path.join(project_path, "models")
+                        in_lora = os.path.join(models_dir, f"{output_nm}.safetensors")
+                        out_lora = os.path.join(models_dir, f"{output_nm}_comfy.safetensors")
+        
+                        save_project_settings(project_path, input_lora_path=in_lora, output_comfy_lora_path=out_lora)
+        
+                        return in_lora, out_lora
+        
+                    import subprocess
+                    import sys
+        
+                    def run_command(command):
+                        try:
+                            encoding = locale.getpreferredencoding(False) or "utf-8"
+                            process = subprocess.Popen(
+                                command,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT,
+                                shell=True,
+                                text=True,
+                                encoding=encoding,
+                                errors="replace",
+                                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                            )
+        
+                            output_log = command + "\n\n"
+                            for line in process.stdout:
+                                output_log += line
+                                yield output_log
+        
+                            process.wait()
+                            if process.returncode != 0:
+                                output_log += (
+                                    f"\nError: Process exited with code / プロセスが次のコードでエラー終了しました: {process.returncode}"
+                                )
+                                yield output_log
+                            else:
+                                output_log += "\nProcess completed successfully / プロセスが正常に完了しました"
+                                yield output_log
+        
+                        except Exception as e:
+                            yield f"Error executing command / コマンドの実行中にエラーが発生しました: {str(e)}"
+        
+                    def cache_latents(project_path, vae_path_val, te1, te2, model, comfy, w, h, batch, vram_val):
+                        if not project_path:
+                            yield "Error: Project directory not set. / プロジェクトディレクトリが設定されていません。"
+                            return
+                        model = _normalize_model_label(model)
+        
+                        # Save settings first
+                        save_project_settings(
+                            project_path,
+                            model_arch=model,
+                            comfy_models_dir=comfy,
+                            resolution_w=w,
+                            resolution_h=h,
+                            batch_size=batch,
+                            vae_path=vae_path_val,
+                            text_encoder1_path=te1,
+                            text_encoder2_path=te2,
+                        )
+        
+                        if not vae_path_val:
+                            yield "Error: VAE path not set. / VAEのパスが設定されていません。"
+                            return
+        
+                        if not os.path.exists(vae_path_val):
+                            yield f"Error: VAE model not found at / 指定されたパスにVAEモデルが見つかりません: {vae_path_val}"
+                            return
+        
+                        config_path = os.path.join(project_path, "dataset_config.toml")
+                        if not os.path.exists(config_path):
+                            yield f"Error: dataset_config.toml not found in {project_path}. Please generate it first. / dataset_config.tomlが {project_path} に見つかりません。先に設定ファイルを生成してください。"
+                            return
+        
+                        script_name = "zimage_cache_latents.py"
+                        if model == "Qwen-Image":
+                            script_name = "qwen_image_cache_latents.py"
+                        elif model.startswith("Flux.2"):
+                             script_name = "flux_2_cache_latents.py"
+        
+                        script_path = os.path.join("src", "musubi_tuner", script_name)
+        
+                        cmd = [sys.executable, script_path, "--dataset_config", config_path, "--vae", vae_path_val]
+        
+                        # Placeholder for argument modification
+                        if _is_zimage(model):
+                            pass
+                        elif model == "Qwen-Image":
+                            pass
+                        elif model == "Flux.2 Dev":
+                            cmd.extend(["--model_version", "dev"])
+                        elif model == "Flux.2 Klein (4B)":
+                            cmd.extend(["--model_version", "klein-4b"])
+                        elif model == "Flux.2 Klein Base (4B)":
+                            cmd.extend(["--model_version", "klein-base-4b"])
+        
+                        command_str = " ".join(cmd)
+                        yield f"Starting Latent Caching. Please wait for the first log to appear. / Latentのキャッシュを開始します。最初のログが表示されるまでにしばらくかかります。\nCommand: {command_str}\n\n"
+        
+                        yield from run_command(command_str)
+        
+                    def cache_text_encoder(
+                        project_path, te1_path_val, te2_path_val, vae, model, comfy, w, h, batch, vram_val, fp8_text_encoder
+                    ):
+                        if not project_path:
+                            yield "Error: Project directory not set. / プロジェクトディレクトリが設定されていません。"
+                            return
+                        model = _normalize_model_label(model)
+        
+                        # Save settings first
+                        save_project_settings(
+                            project_path,
+                            model_arch=model,
+                            comfy_models_dir=comfy,
+                            resolution_w=w,
+                            resolution_h=h,
+                            batch_size=batch,
+                            vae_path=vae,
+                            text_encoder1_path=te1_path_val,
+                            text_encoder2_path=te2_path_val,
+                        )
+        
+                        if not te1_path_val:
+                            yield "Error: Text Encoder 1 path not set. / Text Encoder 1のパスが設定されていません。"
+                            return
+        
+                        if not os.path.exists(te1_path_val):
+                            yield f"Error: Text Encoder 1 model not found at / 指定されたパスにText Encoder 1モデルが見つかりません: {te1_path_val}"
+                            return
+        
+                        # Z-Image only uses te1 for now, but keeping te2 in signature if needed later or for other models
+        
+                        config_path = os.path.join(project_path, "dataset_config.toml")
+                        if not os.path.exists(config_path):
+                            yield f"Error: dataset_config.toml not found in {project_path}. Please generate it first. / dataset_config.tomlが {project_path} に見つかりません。先に設定ファイルを生成してください。"
+                            return
+        
+                        script_name = "zimage_cache_text_encoder_outputs.py"
+                        if model == "Qwen-Image":
+                            script_name = "qwen_image_cache_text_encoder_outputs.py"
+                        elif model.startswith("Flux.2"):
+                            script_name = "flux_2_cache_text_encoder_outputs.py"
+        
+                        script_path = os.path.join("src", "musubi_tuner", script_name)
+        
+                        cmd = [
+                            sys.executable,
+                            script_path,
+                            "--dataset_config",
+                            config_path,
+                            "--text_encoder",
+                            te1_path_val,
+                            "--batch_size",
+                            "1",  # Conservative default
+                        ]
+        
+                        # Model-specific argument modification
+                        if _is_zimage(model):
+                            pass
+                        elif model == "Qwen-Image":
+                            # Add --fp8_vl for low VRAM (16GB or less)
+                            if vram_val in ["12", "16"]:
+                                cmd.append("--fp8_vl")
+                        elif model == "Flux.2 Dev":
+                            cmd.extend(["--model_version", "dev"])
+                        elif model == "Flux.2 Klein (4B)":
+                            cmd.extend(["--model_version", "klein-4b"])
+                        elif model == "Flux.2 Klein Base (4B)":
+                            cmd.extend(["--model_version", "klein-base-4b"])
+        
+                        if model.startswith("Flux.2") and model != "Flux.2 Dev" and fp8_text_encoder:
+                            cmd.append("--fp8_text_encoder")
+        
+                        command_str = " ".join(cmd)
+                        yield f"Starting Text Encoder Caching. Please wait for the first log to appear. / Text Encoderのキャッシュを開始します。最初のログが表示されるまでにしばらくかかります。\nCommand: {command_str}\n\n"
+        
+                        yield from run_command(command_str)
+        
+            with gr.TabItem(tab_label(i18n("acc_preprocessing"))):
+                with gr.Group(elem_classes=["section-card", "card-preprocess"]):
+                    gr.Markdown(i18n("acc_preprocessing"))
+                    gr.Markdown(i18n("desc_preprocessing"))
+                    with gr.Row():
+                        set_preprocessing_defaults_btn = gr.Button(i18n("btn_set_paths"))
+                        auto_detect_paths_btn = gr.Button(i18n("btn_auto_detect_paths"))
+                    auto_detect_status = gr.Markdown("")
+                    with gr.Row(elem_classes=["path-row", "env-row"]):
+                        vae_path = gr.Textbox(label=i18n("lbl_vae_path"), placeholder=i18n("ph_vae_path"), max_lines=1, scale=8)
+                        browse_vae = gr.Button(i18n("btn_browse"), scale=1)
+                    with gr.Row(elem_classes=["path-row", "env-row"]):
+                        text_encoder1_path = gr.Textbox(label=i18n("lbl_te1_path"), placeholder=i18n("ph_te1_path"), max_lines=1, scale=8)
+                        browse_te1 = gr.Button(i18n("btn_browse"), scale=1)
+                    with gr.Row(elem_classes=["path-row", "env-row"]):
+                        text_encoder2_path = gr.Textbox(label=i18n("lbl_te2_path"), placeholder=i18n("ph_te2_path"), max_lines=1, scale=8)
+                        browse_te2 = gr.Button(i18n("btn_browse"), scale=1)
+        
+                    with gr.Row():
+                        cache_latents_btn = gr.Button(i18n("btn_cache_latents"))
+                        cache_text_btn = gr.Button(i18n("btn_cache_text"))
+        
+                    # Simple output area for caching logs
+                    caching_output = gr.Textbox(label=i18n("lbl_cache_log"), lines=10, interactive=False)
+        
+            with gr.TabItem(tab_label(i18n("acc_training"))):
+                with gr.Group(elem_classes=["section-card", "card-training"]):
+                    gr.Markdown(i18n("acc_training"))
+                    gr.Markdown(i18n("desc_training_basic"))
+                    training_model_info = gr.Markdown(i18n("desc_training_flux2"))
+        
+                    with gr.Row():
+                        set_training_defaults_btn = gr.Button(i18n("btn_rec_params"))
+                    with gr.Row(elem_classes=["path-row", "env-row"]):
+                        dit_path = gr.Textbox(label=i18n("lbl_dit_path"), placeholder=i18n("ph_dit_path"), max_lines=1, scale=8)
+                        browse_dit = gr.Button(i18n("btn_browse"), scale=1)
+        
+                    with gr.Row():
+                        output_name = gr.Textbox(label=i18n("lbl_output_name"), value="my_lora", max_lines=1)
+        
+                    with gr.Group():
+                        gr.Markdown(i18n("header_basic_params"))
+                        with gr.Row():
+                            network_dim = gr.Number(label=i18n("lbl_dim"), value=4)
+                            learning_rate = gr.Number(label=i18n("lbl_lr"), value=1e-4)
+                            optimizer_type = gr.Dropdown(
+                                label=i18n("lbl_optimizer"),
+                                choices=["adamw8bit", "adamw", "adafactor"],
+                                value="adamw8bit",
+                            )
+                            optimizer_args = gr.Textbox(
+                                label=i18n("lbl_optimizer_args"), placeholder="e.g. weight_decay=0.01"
+                            )
+                            lr_scheduler = gr.Dropdown(
+                                label=i18n("lbl_lr_scheduler"),
+                                choices=[
+                                    "constant",
+                                    "linear",
+                                    "cosine",
+                                    "cosine_with_restarts",
+                                    "polynomial",
+                                    "constant_with_warmup",
+                                    "adafactor",
+                                    "rex",
+                                ],
+                                value="constant",
+                            )
+                            lr_scheduler_args = gr.Textbox(
+                                label=i18n("lbl_lr_scheduler_args"), placeholder="e.g. num_cycles=1 power=1.0"
+                            )
+                        with gr.Row():
+                            network_alpha = gr.Number(label=i18n("lbl_network_alpha"), value=1)
+                            lr_warmup_steps = gr.Number(label=i18n("lbl_lr_warmup_steps"), value=0, precision=0)
+                            seed = gr.Number(label=i18n("lbl_seed"), value=42, precision=0)
+                            max_grad_norm = gr.Number(label=i18n("lbl_max_grad_norm"), value=1.0)
+                            num_epochs = gr.Number(label=i18n("lbl_epochs"), value=16)
+                            save_every_n_epochs = gr.Number(label=i18n("lbl_save_every"), value=1)
+        
+                    with gr.Group():
+                        with gr.Row():
+                            discrete_flow_shift = gr.Number(label=i18n("lbl_flow_shift"), value=1.0)
+                            block_swap = gr.Slider(label=i18n("lbl_block_swap"), minimum=0, maximum=60, step=1, value=0)
+                            use_pinned_memory_for_block_swap = gr.Checkbox(
+                                label=i18n("lbl_use_pinned_memory_for_block_swap"),
+                                value=False,
+                            )
+        
+                        with gr.Accordion(i18n("accordion_advanced"), open=False):
+                            gr.Markdown(i18n("desc_training_detailed"))
+        
+                        with gr.Row():
+                            mixed_precision = gr.Dropdown(label=i18n("lbl_mixed_precision"), choices=["bf16", "fp16", "no"], value="bf16")
+                            gradient_checkpointing = gr.Checkbox(label=i18n("lbl_grad_cp"), value=True)
+        
+                        with gr.Row():
+                            fp8_scaled = gr.Checkbox(label=i18n("lbl_fp8_scaled"), value=True)
+                            fp8_llm = gr.Checkbox(label=i18n("lbl_fp8_llm"), value=initial_fp8_llm)
+        
+                    with gr.Row():
+                        est_vram_btn = gr.Button(i18n("btn_est_vram"))
+                    vram_estimate = gr.Markdown("")
+        
+                    with gr.Group():
+                        gr.Markdown(i18n("header_sample_images"))
+                        sample_images = gr.Checkbox(label=i18n("lbl_enable_sample"), value=False)
+                        with gr.Row():
+                            sample_prompt = gr.Textbox(label=i18n("lbl_sample_prompt"), placeholder=i18n("ph_sample_prompt"))
+                        with gr.Row():
+                            sample_negative_prompt = gr.Textbox(
+                                label=i18n("lbl_sample_negative_prompt"),
+                                placeholder=i18n("ph_sample_negative_prompt"),
+                            )
+                        with gr.Row():
+                            sample_w = gr.Number(label=i18n("lbl_sample_w"), value=1024, precision=0)
+                            sample_h = gr.Number(label=i18n("lbl_sample_h"), value=1024, precision=0)
+                            sample_every_n = gr.Number(label=i18n("lbl_sample_every_n"), value=1, precision=0)
+                        with gr.Row(elem_classes=["path-row", "env-row"]):
+                            sample_output_dir = gr.Textbox(
+                                label=i18n("lbl_sample_output_dir"),
+                                placeholder=i18n("ph_sample_output_dir"),
+                                scale=8,
+                            )
+                            browse_sample_out = gr.Button(i18n("btn_browse"), scale=1)
+        
+                    with gr.Accordion(i18n("accordion_additional"), open=False):
+                        gr.Markdown(i18n("desc_additional_args"))
+                        additional_args = gr.Textbox(label=i18n("lbl_additional_args"), placeholder=i18n("ph_additional_args"))
+        
+                    with gr.Row(elem_classes=["path-row", "env-row"]):
+                        resume_path = gr.Textbox(label=i18n("lbl_resume"), placeholder=i18n("ph_resume"), scale=8)
+                        browse_resume = gr.Button(i18n("btn_browse"), scale=1)
+        
+                    training_status = gr.Markdown("")
+                    with gr.Row():
+                        start_training_btn = gr.Button(i18n("btn_start_training"), variant="primary", scale=2)
+                        tensorboard_btn = gr.Button(i18n("btn_tensorboard"), scale=1)
+        
+            with gr.TabItem(tab_label(i18n("acc_post_processing"))):
+                with gr.Group(elem_classes=["section-card", "card-post"]):
+                    gr.Markdown(i18n("acc_post_processing"))
+                    gr.Markdown(i18n("desc_post_proc"))
+                    with gr.Row():
+                        set_post_proc_defaults_btn = gr.Button(i18n("btn_set_paths"))
+                    with gr.Row(elem_classes=["path-row", "env-row"]):
+                        input_lora = gr.Textbox(label=i18n("lbl_input_lora"), placeholder=i18n("ph_input_lora"), max_lines=1, scale=8)
+                        browse_input_lora = gr.Button(i18n("btn_browse"), scale=1)
+                    with gr.Row(elem_classes=["path-row", "env-row"]):
+                        output_comfy_lora = gr.Textbox(label=i18n("lbl_output_comfy"), placeholder=i18n("ph_output_comfy"), max_lines=1, scale=8)
+                        browse_output_lora = gr.Button(i18n("btn_browse"), scale=1)
+        
+                    convert_btn = gr.Button(i18n("btn_convert"))
+                    conversion_log = gr.Textbox(label=i18n("lbl_conversion_log"), lines=5, interactive=False)
+        
         def convert_lora_to_comfy(project_path, input_path, output_path, model, comfy, w, h, batch, vae, te1, te2):
             if not project_path:
                 yield "Error: Project directory not set. / プロジェクトディレクトリが設定されていません。"
@@ -2043,64 +2444,82 @@ num_repeats = {num_repeats_int}
                 return i18n("desc_training_flux2")
             return ""
 
+        for name, component in [
+            ("preset_name", preset_name),
+            ("load_preset_dd", load_preset_dd),
+            ("preset_apply_paths", preset_apply_paths),
+            ("preset_status", preset_status),
+            ("project_dir", project_dir),
+            ("project_status", project_status),
+            ("model_arch", model_arch),
+            ("vram_size", vram_size),
+            ("comfy_models_dir", comfy_models_dir),
+            ("models_status", models_status),
+            ("quick_status", quick_status),
+            ("resolution_w", resolution_w),
+            ("resolution_h", resolution_h),
+            ("batch_size", batch_size),
+            ("control_directory", control_directory),
+            ("control_res_w", control_res_w),
+            ("control_res_h", control_res_h),
+            ("no_resize_control", no_resize_control),
+            ("image_directory", image_directory),
+            ("cache_directory", cache_directory),
+            ("caption_extension", caption_extension),
+            ("num_repeats", num_repeats),
+            ("enable_bucket", enable_bucket),
+            ("bucket_no_upscale", bucket_no_upscale),
+            ("dataset_status", dataset_status),
+            ("toml_preview", toml_preview),
+            ("auto_detect_status", auto_detect_status),
+            ("vae_path", vae_path),
+            ("text_encoder1_path", text_encoder1_path),
+            ("text_encoder2_path", text_encoder2_path),
+            ("caching_output", caching_output),
+            ("training_model_info", training_model_info),
+            ("dit_path", dit_path),
+            ("output_name", output_name),
+            ("network_dim", network_dim),
+            ("learning_rate", learning_rate),
+            ("optimizer_type", optimizer_type),
+            ("optimizer_args", optimizer_args),
+            ("lr_scheduler", lr_scheduler),
+            ("lr_scheduler_args", lr_scheduler_args),
+            ("network_alpha", network_alpha),
+            ("lr_warmup_steps", lr_warmup_steps),
+            ("seed", seed),
+            ("max_grad_norm", max_grad_norm),
+            ("num_epochs", num_epochs),
+            ("save_every_n_epochs", save_every_n_epochs),
+            ("discrete_flow_shift", discrete_flow_shift),
+            ("block_swap", block_swap),
+            ("use_pinned_memory_for_block_swap", use_pinned_memory_for_block_swap),
+            ("mixed_precision", mixed_precision),
+            ("gradient_checkpointing", gradient_checkpointing),
+            ("fp8_scaled", fp8_scaled),
+            ("fp8_llm", fp8_llm),
+            ("vram_estimate", vram_estimate),
+            ("sample_images", sample_images),
+            ("sample_prompt", sample_prompt),
+            ("sample_negative_prompt", sample_negative_prompt),
+            ("sample_w", sample_w),
+            ("sample_h", sample_h),
+            ("sample_every_n", sample_every_n),
+            ("sample_output_dir", sample_output_dir),
+            ("additional_args", additional_args),
+            ("resume_path", resume_path),
+            ("training_status", training_status),
+            ("input_lora", input_lora),
+            ("output_comfy_lora", output_comfy_lora),
+            ("conversion_log", conversion_log),
+        ]:
+            register(name, component)
+
         # Event wiring moved to end to prevent UnboundLocalError
         init_btn.click(
             fn=init_project,
             inputs=[project_dir],
-            outputs=[
-                project_status,
-                model_arch,
-                vram_size,
-                comfy_models_dir,
-                resolution_w,
-                resolution_h,
-                batch_size,
-                control_directory,
-                control_res_w,
-                control_res_h,
-                no_resize_control,
-                image_directory,
-                cache_directory,
-                caption_extension,
-                num_repeats,
-                enable_bucket,
-                bucket_no_upscale,
-                toml_preview,
-                vae_path,
-                text_encoder1_path,
-                text_encoder2_path,
-                dit_path,
-                output_name,
-                network_dim,
-                learning_rate,
-                optimizer_type,
-                optimizer_args,
-                lr_scheduler,
-                lr_scheduler_args,
-                network_alpha,
-                lr_warmup_steps,
-                seed,
-                max_grad_norm,
-                num_epochs,
-                save_every_n_epochs,
-                discrete_flow_shift,
-                block_swap,
-                use_pinned_memory_for_block_swap,
-                mixed_precision,
-                gradient_checkpointing,
-                fp8_scaled,
-                fp8_llm,
-                additional_args,
-                sample_images,
-                sample_every_n,
-                sample_output_dir,
-                sample_prompt,
-                sample_negative_prompt,
-                sample_w,
-                sample_h,
-                input_lora,
-                output_comfy_lora,
-            ],
+            outputs=[project_status, *components_for(INIT_OUTPUT_KEYS)],
         )
 
         model_arch.change(fn=update_model_info, inputs=[model_arch], outputs=[training_model_info])
@@ -2137,38 +2556,7 @@ num_repeats = {num_repeats_int}
         quick_setup_btn.click(
             fn=quick_setup,
             inputs=[project_dir, model_arch, vram_size, comfy_models_dir],
-            outputs=[
-                resolution_w,
-                resolution_h,
-                batch_size,
-                vae_path,
-                text_encoder1_path,
-                text_encoder2_path,
-                dit_path,
-                network_dim,
-                learning_rate,
-                optimizer_type,
-                optimizer_args,
-                network_alpha,
-                lr_warmup_steps,
-                seed,
-                max_grad_norm,
-                num_epochs,
-                save_every_n_epochs,
-                discrete_flow_shift,
-                block_swap,
-                use_pinned_memory_for_block_swap,
-                mixed_precision,
-                gradient_checkpointing,
-                fp8_scaled,
-                fp8_llm,
-                sample_every_n,
-                sample_w,
-                sample_h,
-                sample_output_dir,
-                training_model_info,
-                quick_status,
-            ],
+            outputs=components_for(QUICK_SETUP_OUTPUT_KEYS),
         )
 
         check_missing_btn.click(
@@ -2183,6 +2571,11 @@ num_repeats = {num_repeats_int}
         browse_image_dir.click(fn=browse_dir, inputs=[image_directory], outputs=[image_directory])
         browse_cache_dir.click(fn=browse_dir, inputs=[cache_directory], outputs=[cache_directory])
 
+        open_presets_btn.click(fn=open_presets_folder, outputs=[preset_status])
+        open_project_btn.click(fn=open_project_folder, inputs=[project_dir], outputs=[project_status])
+        open_training_btn.click(fn=open_training_folder, inputs=[project_dir], outputs=[project_status])
+        open_logs_btn.click(fn=open_logs_folder, inputs=[project_dir], outputs=[project_status])
+
         browse_vae.click(fn=browse_file, inputs=[vae_path], outputs=[vae_path])
         browse_te1.click(fn=browse_file, inputs=[text_encoder1_path], outputs=[text_encoder1_path])
         browse_te2.click(fn=browse_file, inputs=[text_encoder2_path], outputs=[text_encoder2_path])
@@ -2196,7 +2589,7 @@ num_repeats = {num_repeats_int}
         set_rec_settings_btn.click(
             fn=set_recommended_settings,
             inputs=[project_dir, model_arch, vram_size],
-            outputs=[resolution_w, resolution_h, batch_size],
+            outputs=components_for(RECOMMENDED_KEYS),
         )
 
         set_preprocessing_defaults_btn.click(
@@ -2218,30 +2611,7 @@ num_repeats = {num_repeats_int}
         set_training_defaults_btn.click(
             fn=set_training_defaults,
             inputs=[project_dir, comfy_models_dir, model_arch, vram_size],
-            outputs=[
-                dit_path,
-                network_dim,
-                learning_rate,
-                optimizer_type,
-                optimizer_args,
-                network_alpha,
-                lr_warmup_steps,
-                seed,
-                max_grad_norm,
-                num_epochs,
-                save_every_n_epochs,
-                discrete_flow_shift,
-                block_swap,
-                use_pinned_memory_for_block_swap,
-                mixed_precision,
-                gradient_checkpointing,
-                fp8_scaled,
-                fp8_llm,
-                sample_every_n,
-                sample_w,
-                sample_h,
-                sample_output_dir,
-            ],
+            outputs=components_for(TRAINING_DEFAULT_KEYS),
         )
 
         est_vram_btn.click(
@@ -2340,21 +2710,7 @@ num_repeats = {num_repeats_int}
         
         save_preset_btn.click(
             fn=save_preset,
-            inputs=[
-                preset_name,
-                project_dir, model_arch, vram_size, comfy_models_dir,
-                resolution_w, resolution_h, batch_size,
-                control_directory, control_res_w, control_res_h, no_resize_control,
-                image_directory, cache_directory, caption_extension, num_repeats, enable_bucket, bucket_no_upscale,
-                vae_path, text_encoder1_path, text_encoder2_path,
-                dit_path, output_name, network_dim, learning_rate, optimizer_type, optimizer_args, lr_scheduler, lr_scheduler_args,
-                network_alpha, lr_warmup_steps, seed, max_grad_norm,
-                num_epochs, save_every_n_epochs,
-                discrete_flow_shift, block_swap, use_pinned_memory_for_block_swap, mixed_precision, gradient_checkpointing,
-                fp8_scaled, fp8_llm, additional_args,
-                sample_images, sample_every_n, sample_output_dir, sample_prompt, sample_negative_prompt, sample_w, sample_h,
-                input_lora, output_comfy_lora
-            ],
+            inputs=[preset_name] + components_for(PRESET_COMPONENT_KEYS),
             outputs=[preset_status]
         )
         
@@ -2364,21 +2720,7 @@ num_repeats = {num_repeats_int}
         load_preset_btn.click(
              fn=load_preset,
              inputs=[load_preset_dd, preset_apply_paths],
-             outputs=[
-                preset_status,
-                project_dir, model_arch, vram_size, comfy_models_dir,
-                resolution_w, resolution_h, batch_size,
-                control_directory, control_res_w, control_res_h, no_resize_control,
-                image_directory, cache_directory, caption_extension, num_repeats, enable_bucket, bucket_no_upscale,
-                vae_path, text_encoder1_path, text_encoder2_path,
-                dit_path, output_name, network_dim, learning_rate, optimizer_type, optimizer_args, lr_scheduler, lr_scheduler_args,
-                network_alpha, lr_warmup_steps, seed, max_grad_norm,
-                num_epochs, save_every_n_epochs,
-                discrete_flow_shift, block_swap, use_pinned_memory_for_block_swap, mixed_precision, gradient_checkpointing,
-                fp8_scaled, fp8_llm, additional_args,
-                sample_images, sample_every_n, sample_output_dir, sample_prompt, sample_negative_prompt, sample_w, sample_h,
-                input_lora, output_comfy_lora
-             ]
+             outputs=[preset_status, *components_for(PRESET_OUTPUT_COMPONENT_KEYS)]
         )
         
         refresh_preset_btn.click(fn=refresh_preset_dropdown, outputs=[load_preset_dd])
