@@ -1,4 +1,4 @@
-[English](./gui.md) | [日本語](./gui.ja.md)
+﻿[English](./gui.md) | [日本語](./gui.ja.md)
 
 # Musubi Tuner GUI - ユーザーガイド
 
@@ -442,3 +442,41 @@ LoRAを学習した後：
 3. ComfyUIでLoRA loaderノードを使用して読み込み
 
 より高度な学習オプションやコマンドラインでの使用方法については、`docs`フォルダ内のMusubi Tunerのメインドキュメントを参照してください。
+
+---
+
+## 2026-02-15 機能更新 (LoHa/LoKr + Z-Image Fine-tune)
+
+### 学習モード
+- Training Mode を追加しました: LoRA/LoHa/LoKr と Fine-tune。
+- Fine-tune は Model Architecture が Z-Image の場合のみ選択できます。
+- Qwen-Image と Flux.2 系では LoRA/LoHa/LoKr のみ表示されます。
+
+### LoRA/LoHa/LoKr モード
+- Network Type を追加しました。
+  - LoRA: モデル別 LoRA モジュール
+  - LoHa: networks.loha
+  - LoKr: networks.lokr
+- Network Args (任意) を追加しました。
+- Network Args はシェル形式で分割され、--network_args として渡されます。
+
+### Fine-tune モード (Z-Image 専用)
+- 学習スクリプトは zimage_train.py を使用します。
+- LoRA 用 network 引数は非表示になり、コマンドにも付与されません。
+- 追加フラグ:
+  - --full_bf16
+  - --fused_backward_pass
+  - --mem_eff_save
+  - --block_swap_optimizer_patch_params
+
+### 変換 (Post-Processing)
+- LoKr Rank (任意) を追加しました。
+- 指定する場合は正の整数のみ有効で、--lokr_rank <n> として渡されます。
+
+### 設定とプリセットの互換性
+- musubi_project.toml に以下を保存します。
+  - training_mode, network_type, network_args
+  - full_bf16, fused_backward_pass, mem_eff_save, block_swap_optimizer_patch_params
+  - lokr_rank
+- 旧プロジェクト/旧プリセットは、欠落キーを既定値で補完して読み込み可能です。
+

@@ -43,5 +43,13 @@
     "control_resolution_w": 0,
     "control_resolution_h": 0,
     "no_resize_control": false,
-    "output_comfy": ""
+    "output_comfy": "",
+    "training_mode": "LoRA/LoHa/LoKr",
+    "network_type": "LoRA",
+    "network_args": "",
+    "full_bf16": false,
+    "fused_backward_pass": false,
+    "mem_eff_save": false,
+    "block_swap_optimizer_patch_params": false,
+    "lokr_rank": ""
 }

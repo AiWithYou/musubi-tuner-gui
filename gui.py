@@ -1,4 +1,4 @@
-import glob
+﻿import glob
 import gradio as gr
 import inspect
 import locale
@@ -17,7 +17,27 @@ from i18n_data import I18N_DATA
 config_manager = ConfigManager()
 
 
-i18n = gr.I18n(en=I18N_DATA["en"], ja=I18N_DATA["ja"])
+def _create_fallback_i18n():
+    default_lang = "en"
+    try:
+        lang_code = (locale.getdefaultlocale() or [""])[0] or ""
+        if lang_code.lower().startswith("ja"):
+            default_lang = "ja"
+    except Exception:
+        default_lang = "en"
+
+    def _lookup(key):
+        if default_lang in I18N_DATA and key in I18N_DATA[default_lang]:
+            return I18N_DATA[default_lang][key]
+        return I18N_DATA["en"].get(key, key)
+
+    return _lookup
+
+
+if hasattr(gr, "I18n"):
+    i18n = gr.I18n(en=I18N_DATA["en"], ja=I18N_DATA["ja"])
+else:
+    i18n = _create_fallback_i18n()
 
 try:
     _launch_params = inspect.signature(gr.Blocks.launch).parameters
@@ -26,6 +46,7 @@ except (ValueError, TypeError):
 
 LAUNCH_SUPPORTS_THEME = "theme" in _launch_params
 LAUNCH_SUPPORTS_CSS = "css" in _launch_params
+LAUNCH_SUPPORTS_I18N = "i18n" in _launch_params
 
 warnings.filterwarnings(
     "ignore",
@@ -351,6 +372,8 @@ def construct_ui():
     # --- Preset Management ---
     PRESETS_DIR = os.path.join(os.path.dirname(__file__), "presets")
     os.makedirs(PRESETS_DIR, exist_ok=True)
+    TRAINING_MODE_LORA = "LoRA/LoHa/LoKr"
+    TRAINING_MODE_FINETUNE = "Fine-tune"
 
     def _normalize_model_label(model_name):
         return "Z-Image" if model_name == "Z-Image-Turbo" else model_name
@@ -416,6 +439,14 @@ def construct_ui():
             "sample_h": zimage_resolution[1],
             "input_lora": "",
             "output_comfy": "",
+            "training_mode": zimage_defaults.get("training_mode", TRAINING_MODE_LORA),
+            "network_type": zimage_defaults.get("network_type", "LoRA"),
+            "network_args": zimage_defaults.get("network_args", ""),
+            "full_bf16": zimage_defaults.get("full_bf16", False),
+            "fused_backward_pass": zimage_defaults.get("fused_backward_pass", False),
+            "mem_eff_save": zimage_defaults.get("mem_eff_save", False),
+            "block_swap_optimizer_patch_params": zimage_defaults.get("block_swap_optimizer_patch_params", False),
+            "lokr_rank": "",
         }
 
         defaults = {"Z-Image (default)": preset}
@@ -505,6 +536,14 @@ def construct_ui():
         "sample_h": "sample_h",
         "input_lora": "input_lora",
         "output_comfy": "output_comfy_lora",
+        "training_mode": "training_mode",
+        "network_type": "network_type",
+        "network_args": "network_args",
+        "full_bf16": "full_bf16",
+        "fused_backward_pass": "fused_backward_pass",
+        "mem_eff_save": "mem_eff_save",
+        "block_swap_optimizer_patch_params": "block_swap_optimizer_patch_params",
+        "lokr_rank": "lokr_rank",
     }
 
     PRESET_DATA_KEYS = [
@@ -559,6 +598,14 @@ def construct_ui():
         "sample_h",
         "input_lora",
         "output_comfy",
+        "training_mode",
+        "network_type",
+        "network_args",
+        "full_bf16",
+        "fused_backward_pass",
+        "mem_eff_save",
+        "block_swap_optimizer_patch_params",
+        "lokr_rank",
     ]
     PRESET_COMPONENT_KEYS = [PRESET_FIELD_MAP[key] for key in PRESET_DATA_KEYS]
     PRESET_OUTPUT_COMPONENT_KEYS = PRESET_COMPONENT_KEYS
@@ -615,6 +662,14 @@ def construct_ui():
         "sample_h",
         "input_lora",
         "output_comfy_lora",
+        "training_mode",
+        "network_type",
+        "network_args",
+        "full_bf16",
+        "fused_backward_pass",
+        "mem_eff_save",
+        "block_swap_optimizer_patch_params",
+        "lokr_rank",
     ]
 
     TRAINING_DEFAULT_KEYS = [
@@ -623,6 +678,9 @@ def construct_ui():
         "learning_rate",
         "optimizer_type",
         "optimizer_args",
+        "training_mode",
+        "network_type",
+        "network_args",
         "network_alpha",
         "lr_warmup_steps",
         "seed",
@@ -636,6 +694,10 @@ def construct_ui():
         "gradient_checkpointing",
         "fp8_scaled",
         "fp8_llm",
+        "full_bf16",
+        "fused_backward_pass",
+        "mem_eff_save",
+        "block_swap_optimizer_patch_params",
         "sample_every_n",
         "sample_w",
         "sample_h",
@@ -654,6 +716,9 @@ def construct_ui():
         "learning_rate",
         "optimizer_type",
         "optimizer_args",
+        "training_mode",
+        "network_type",
+        "network_args",
         "network_alpha",
         "lr_warmup_steps",
         "seed",
@@ -667,6 +732,10 @@ def construct_ui():
         "gradient_checkpointing",
         "fp8_scaled",
         "fp8_llm",
+        "full_bf16",
+        "fused_backward_pass",
+        "mem_eff_save",
+        "block_swap_optimizer_patch_params",
         "sample_every_n",
         "sample_w",
         "sample_h",
@@ -765,6 +834,26 @@ def construct_ui():
                 if (not apply_paths) and data_key in path_keys:
                     continue
                 updates[component_key] = data.get(data_key)
+
+            # Backward compatibility: older presets may miss newer training/conversion keys.
+            missing_key_defaults = {
+                "training_mode": TRAINING_MODE_LORA,
+                "network_type": "LoRA",
+                "network_args": "",
+                "full_bf16": False,
+                "fused_backward_pass": False,
+                "mem_eff_save": False,
+                "block_swap_optimizer_patch_params": False,
+                "lokr_rank": "",
+            }
+            for data_key, default_value in missing_key_defaults.items():
+                component_key = PRESET_FIELD_MAP[data_key]
+                if data_key not in data and component_key not in updates:
+                    updates[component_key] = default_value
+
+            effective_model = updates.get("model_arch", _normalize_model_label(data.get("model_arch", "Flux.2 Klein (4B)")))
+            if not _is_zimage(effective_model):
+                updates["training_mode"] = TRAINING_MODE_LORA
 
             return [status, *pack_updates(PRESET_OUTPUT_COMPONENT_KEYS, updates)]
         except Exception as e:
@@ -1044,7 +1133,7 @@ def construct_ui():
                             if not settings:
                                 preview_content = load_dataset_config_content(path)
                                 msg = f"Project initialized at {path}. No saved settings found; keeping current values."
-                                msg += "\n\nプロジェクトが初期化されました。保存された設定がないため、現在の入力を保持します。"
+                                msg += "\n\nProject initialized. No saved settings were found, so current form values were kept."
                                 updates = {}
                                 if preview_content:
                                     updates["toml_preview"] = preview_content
@@ -1082,6 +1171,11 @@ def construct_ui():
                             new_max_grad_norm = settings.get("max_grad_norm", 1.0)
                             new_lr_scheduler = settings.get("lr_scheduler", "constant")
                             new_lr_scheduler_args = settings.get("lr_scheduler_args", "")
+                            new_training_mode = settings.get("training_mode", TRAINING_MODE_LORA)
+                            if not _is_zimage(new_model):
+                                new_training_mode = TRAINING_MODE_LORA
+                            new_network_type = settings.get("network_type", "LoRA")
+                            new_network_args = settings.get("network_args", "")
                             new_epochs = settings.get("num_epochs", 16)
                             new_save_n = settings.get("save_every_n_epochs", 1)
                             new_flow = settings.get("discrete_flow_shift", 2.0)
@@ -1091,6 +1185,10 @@ def construct_ui():
                             new_grad_cp = settings.get("gradient_checkpointing", True)
                             new_fp8_s = settings.get("fp8_scaled", True)
                             new_fp8_l = settings.get("fp8_llm", False)
+                            new_full_bf16 = settings.get("full_bf16", False)
+                            new_fused_backward_pass = settings.get("fused_backward_pass", False)
+                            new_mem_eff_save = settings.get("mem_eff_save", False)
+                            new_block_swap_optimizer_patch_params = settings.get("block_swap_optimizer_patch_params", False)
                             new_add_args = settings.get("additional_args", "")
         
                             # Sample image params
@@ -1105,6 +1203,7 @@ def construct_ui():
                             # Post-processing params
                             new_in_lora = settings.get("input_lora_path", "")
                             new_out_comfy = settings.get("output_comfy_lora_path", "")
+                            new_lokr_rank = settings.get("lokr_rank", "")
         
                             # Load dataset config content
                             preview_content = load_dataset_config_content(path)
@@ -1113,10 +1212,10 @@ def construct_ui():
                             if settings:
                                 msg += " Settings loaded."
                             msg += " 'training' folder ready. Configure the dataset in the 'training' folder. Images and caption files (same name as image, extension is '.txt') should be placed in the 'training' folder."
-                            msg += "\n\nプロジェクトが初期化されました。"
+                            msg += "\n\nProject initialized."
                             if settings:
-                                msg += "設定が読み込まれました。"
-                            msg += "'training' フォルダが準備されました。画像とキャプションファイル（画像と同じファイル名で拡張子は '.txt'）を配置してください。"
+                                msg += " Settings loaded from musubi_project.toml."
+                            msg += " Place images and matching caption files (.txt) in the 'training' folder."
         
                             updates = {
                                 "model_arch": new_model,
@@ -1147,6 +1246,9 @@ def construct_ui():
                                 "optimizer_args": new_optimizer_args,
                                 "lr_scheduler": new_lr_scheduler,
                                 "lr_scheduler_args": new_lr_scheduler_args,
+                                "training_mode": new_training_mode,
+                                "network_type": new_network_type,
+                                "network_args": new_network_args,
                                 "network_alpha": new_network_alpha,
                                 "lr_warmup_steps": new_lr_warmup_steps,
                                 "seed": new_seed,
@@ -1160,6 +1262,10 @@ def construct_ui():
                                 "gradient_checkpointing": new_grad_cp,
                                 "fp8_scaled": new_fp8_s,
                                 "fp8_llm": new_fp8_l,
+                                "full_bf16": new_full_bf16,
+                                "fused_backward_pass": new_fused_backward_pass,
+                                "mem_eff_save": new_mem_eff_save,
+                                "block_swap_optimizer_patch_params": new_block_swap_optimizer_patch_params,
                                 "additional_args": new_add_args,
                                 "sample_images": new_sample_enable,
                                 "sample_every_n": new_sample_every_n,
@@ -1170,6 +1276,7 @@ def construct_ui():
                                 "sample_h": new_sample_h,
                                 "input_lora": new_in_lora,
                                 "output_comfy_lora": new_out_comfy,
+                                "lokr_rank": new_lokr_rank,
                             }
                             return (msg, *pack_updates(INIT_OUTPUT_KEYS, updates))
                         except Exception as e:
@@ -1198,7 +1305,7 @@ def construct_ui():
                         bucket_no_upscale_val,
                     ):
                         if not project_path:
-                            return "Error: Project directory not specified.\nエラー: プロジェクトディレクトリが指定されていません。", ""
+                            return "Error: Project directory not specified.", ""
         
                         # Save project settings first
                         save_project_settings(
@@ -1279,13 +1386,13 @@ def construct_ui():
                             config_path = os.path.join(project_path, "dataset_config.toml")
                             with open(config_path, "w", encoding="utf-8") as f:
                                 f.write(toml_content)
-                            return f"Successfully generated config at / 設定ファイルが作成されました: {config_path}", toml_content
+                            return f"Successfully generated config at / 險ｭ螳壹ヵ繧｡繧､繝ｫ縺御ｽ懈・縺輔ｌ縺ｾ縺励◆: {config_path}", toml_content
                         except Exception as e:
-                            return f"Error generating config / 設定ファイルの生成に失敗しました: {str(e)}", ""
+                            return f"Error generating config / 險ｭ螳壹ヵ繧｡繧､繝ｫ縺ｮ逕滓・縺ｫ螟ｱ謨励＠縺ｾ縺励◆: {str(e)}", ""
         
                     def validate_models_dir(path):
                         if not path:
-                            return "Please enter a ComfyUI models directory. / ComfyUIのmodelsディレクトリを入力してください。"
+                            return "Please enter a ComfyUI models directory."
         
                         required_subdirs = ["diffusion_models", "vae", "text_encoders"]
                         missing = []
@@ -1294,9 +1401,9 @@ def construct_ui():
                                 missing.append(d)
         
                         if missing:
-                            return f"Error: Missing subdirectories in models folder / modelsフォルダに以下のサブディレクトリが見つかりません: {', '.join(missing)}"
+                            return f"Error: Missing subdirectories in models folder / models繝輔か繝ｫ繝縺ｫ莉･荳九・繧ｵ繝悶ョ繧｣繝ｬ繧ｯ繝医Μ縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ: {', '.join(missing)}"
         
-                        return "Valid ComfyUI models directory structure found / 有効なComfyUI modelsディレクトリ構造が見つかりました。"
+                        return "Valid ComfyUI models directory structure found."
         
                     def set_recommended_settings(project_path, model_arch, vram_val):
                         model_arch = _normalize_model_label(model_arch)
@@ -1506,6 +1613,11 @@ def construct_ui():
                         lr = defaults.get("learning_rate", 1e-4)
                         optimizer_type = defaults.get("optimizer_type", "adamw8bit")
                         optimizer_args = defaults.get("optimizer_args", "")
+                        training_mode = defaults.get("training_mode", TRAINING_MODE_LORA)
+                        if not _is_zimage(model_arch):
+                            training_mode = TRAINING_MODE_LORA
+                        network_type = defaults.get("network_type", "LoRA")
+                        network_args = defaults.get("network_args", "")
                         network_alpha = defaults.get("network_alpha", 1)
                         lr_warmup_steps = defaults.get("lr_warmup_steps", 0)
                         seed = defaults.get("seed", 42)
@@ -1519,7 +1631,11 @@ def construct_ui():
                         grad_cp = defaults.get("gradient_checkpointing", True)
                         fp8_s = defaults.get("fp8_scaled", True)
                         fp8_l = defaults.get("fp8_llm", False)
-        
+                        full_bf16 = defaults.get("full_bf16", False)
+                        fused_backward_pass = defaults.get("fused_backward_pass", False)
+                        mem_eff_save = defaults.get("mem_eff_save", False)
+                        block_swap_optimizer_patch_params = defaults.get("block_swap_optimizer_patch_params", False)
+
                         sample_w = config_manager.get_resolution(model_arch)[0]
                         sample_h = config_manager.get_resolution(model_arch)[1]
                         sample_out = ""
@@ -1532,6 +1648,9 @@ def construct_ui():
                                 learning_rate=lr,
                                 optimizer_type=optimizer_type,
                                 optimizer_args=optimizer_args,
+                                training_mode=training_mode,
+                                network_type=network_type,
+                                network_args=network_args,
                                 network_alpha=network_alpha,
                                 lr_warmup_steps=lr_warmup_steps,
                                 seed=seed,
@@ -1545,6 +1664,10 @@ def construct_ui():
                                 gradient_checkpointing=grad_cp,
                                 fp8_scaled=fp8_s,
                                 fp8_llm=fp8_l,
+                                full_bf16=full_bf16,
+                                fused_backward_pass=fused_backward_pass,
+                                mem_eff_save=mem_eff_save,
+                                block_swap_optimizer_patch_params=block_swap_optimizer_patch_params,
                                 sample_every_n_epochs=sample_every_n_epochs,
                                 sample_w=sample_w,
                                 sample_h=sample_h,
@@ -1557,6 +1680,9 @@ def construct_ui():
                             "learning_rate": lr,
                             "optimizer_type": optimizer_type,
                             "optimizer_args": optimizer_args,
+                            "training_mode": training_mode,
+                            "network_type": network_type,
+                            "network_args": network_args,
                             "network_alpha": network_alpha,
                             "lr_warmup_steps": lr_warmup_steps,
                             "seed": seed,
@@ -1570,6 +1696,10 @@ def construct_ui():
                             "gradient_checkpointing": grad_cp,
                             "fp8_scaled": fp8_s,
                             "fp8_llm": fp8_l,
+                            "full_bf16": full_bf16,
+                            "fused_backward_pass": fused_backward_pass,
+                            "mem_eff_save": mem_eff_save,
+                            "block_swap_optimizer_patch_params": block_swap_optimizer_patch_params,
                             "sample_every_n": sample_every_n_epochs,
                             "sample_w": sample_w,
                             "sample_h": sample_h,
@@ -1634,7 +1764,7 @@ def construct_ui():
                         high = vram * 1.2
         
                         return (
-                            f"**{i18n('msg_est_vram_title')}**: ~{low:.1f}–{high:.1f} GB\n\n"
+                            f"**{i18n('msg_est_vram_title')}**: ~{low:.1f} - {high:.1f} GB\n\n"
                             f"{i18n('msg_est_vram_note')}"
                         )
         
@@ -1657,6 +1787,9 @@ def construct_ui():
                             lr,
                             optimizer_type,
                             optimizer_args,
+                            training_mode,
+                            network_type,
+                            network_args,
                             network_alpha,
                             lr_warmup_steps,
                             seed,
@@ -1670,6 +1803,10 @@ def construct_ui():
                             grad_cp,
                             fp8_s,
                             fp8_l,
+                            full_bf16,
+                            fused_backward_pass,
+                            mem_eff_save,
+                            block_swap_optimizer_patch_params,
                             sample_every_n_epochs,
                             sample_w_default,
                             sample_h_default,
@@ -1702,6 +1839,9 @@ def construct_ui():
                             "learning_rate": lr,
                             "optimizer_type": optimizer_type,
                             "optimizer_args": optimizer_args,
+                            "training_mode": training_mode,
+                            "network_type": network_type,
+                            "network_args": network_args,
                             "network_alpha": network_alpha,
                             "lr_warmup_steps": lr_warmup_steps,
                             "seed": seed,
@@ -1715,6 +1855,10 @@ def construct_ui():
                             "gradient_checkpointing": grad_cp,
                             "fp8_scaled": fp8_s,
                             "fp8_llm": fp8_l,
+                            "full_bf16": full_bf16,
+                            "fused_backward_pass": fused_backward_pass,
+                            "mem_eff_save": mem_eff_save,
+                            "block_swap_optimizer_patch_params": block_swap_optimizer_patch_params,
                             "sample_every_n": sample_every_n_epochs,
                             "sample_w": sample_w_default,
                             "sample_h": sample_h_default,
@@ -1788,19 +1932,19 @@ def construct_ui():
                             process.wait()
                             if process.returncode != 0:
                                 output_log += (
-                                    f"\nError: Process exited with code / プロセスが次のコードでエラー終了しました: {process.returncode}"
+                                    f"\nError: Process exited with code / 繝励Ο繧ｻ繧ｹ縺梧ｬ｡縺ｮ繧ｳ繝ｼ繝峨〒繧ｨ繝ｩ繝ｼ邨ゆｺ・＠縺ｾ縺励◆: {process.returncode}"
                                 )
                                 yield output_log
                             else:
-                                output_log += "\nProcess completed successfully / プロセスが正常に完了しました"
+                                output_log += "\nProcess completed successfully / 繝励Ο繧ｻ繧ｹ縺梧ｭ｣蟶ｸ縺ｫ螳御ｺ・＠縺ｾ縺励◆"
                                 yield output_log
         
                         except Exception as e:
-                            yield f"Error executing command / コマンドの実行中にエラーが発生しました: {str(e)}"
+                            yield f"Error executing command / 繧ｳ繝槭Φ繝峨・螳溯｡御ｸｭ縺ｫ繧ｨ繝ｩ繝ｼ縺檎匱逕溘＠縺ｾ縺励◆: {str(e)}"
         
                     def cache_latents(project_path, vae_path_val, te1, te2, model, comfy, w, h, batch, vram_val):
                         if not project_path:
-                            yield "Error: Project directory not set. / プロジェクトディレクトリが設定されていません。"
+                            yield "Error: Project directory not set."
                             return
                         model = _normalize_model_label(model)
         
@@ -1818,16 +1962,16 @@ def construct_ui():
                         )
         
                         if not vae_path_val:
-                            yield "Error: VAE path not set. / VAEのパスが設定されていません。"
+                            yield "Error: VAE path not set."
                             return
         
                         if not os.path.exists(vae_path_val):
-                            yield f"Error: VAE model not found at / 指定されたパスにVAEモデルが見つかりません: {vae_path_val}"
+                            yield f"Error: VAE model not found at / 謖・ｮ壹＆繧後◆繝代せ縺ｫVAE繝｢繝・Ν縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ: {vae_path_val}"
                             return
         
                         config_path = os.path.join(project_path, "dataset_config.toml")
                         if not os.path.exists(config_path):
-                            yield f"Error: dataset_config.toml not found in {project_path}. Please generate it first. / dataset_config.tomlが {project_path} に見つかりません。先に設定ファイルを生成してください。"
+                            yield f"Error: dataset_config.toml not found in {project_path}. Please generate it first."
                             return
         
                         script_name = "zimage_cache_latents.py"
@@ -1853,7 +1997,7 @@ def construct_ui():
                             cmd.extend(["--model_version", "klein-base-4b"])
         
                         command_str = " ".join(cmd)
-                        yield f"Starting Latent Caching. Please wait for the first log to appear. / Latentのキャッシュを開始します。最初のログが表示されるまでにしばらくかかります。\nCommand: {command_str}\n\n"
+                        yield f"Starting Latent Caching. Please wait for the first log to appear. / Latent縺ｮ繧ｭ繝｣繝・す繝･繧帝幕蟋九＠縺ｾ縺吶よ怙蛻昴・繝ｭ繧ｰ縺瑚｡ｨ遉ｺ縺輔ｌ繧九∪縺ｧ縺ｫ縺励・繧峨￥縺九°繧翫∪縺吶・nCommand: {command_str}\n\n"
         
                         yield from run_command(command_str)
         
@@ -1861,7 +2005,7 @@ def construct_ui():
                         project_path, te1_path_val, te2_path_val, vae, model, comfy, w, h, batch, vram_val, fp8_text_encoder
                     ):
                         if not project_path:
-                            yield "Error: Project directory not set. / プロジェクトディレクトリが設定されていません。"
+                            yield "Error: Project directory not set."
                             return
                         model = _normalize_model_label(model)
         
@@ -1879,18 +2023,18 @@ def construct_ui():
                         )
         
                         if not te1_path_val:
-                            yield "Error: Text Encoder 1 path not set. / Text Encoder 1のパスが設定されていません。"
+                            yield "Error: Text Encoder 1 path not set."
                             return
         
                         if not os.path.exists(te1_path_val):
-                            yield f"Error: Text Encoder 1 model not found at / 指定されたパスにText Encoder 1モデルが見つかりません: {te1_path_val}"
+                            yield f"Error: Text Encoder 1 model not found at / 謖・ｮ壹＆繧後◆繝代せ縺ｫText Encoder 1繝｢繝・Ν縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ: {te1_path_val}"
                             return
         
                         # Z-Image only uses te1 for now, but keeping te2 in signature if needed later or for other models
         
                         config_path = os.path.join(project_path, "dataset_config.toml")
                         if not os.path.exists(config_path):
-                            yield f"Error: dataset_config.toml not found in {project_path}. Please generate it first. / dataset_config.tomlが {project_path} に見つかりません。先に設定ファイルを生成してください。"
+                            yield f"Error: dataset_config.toml not found in {project_path}. Please generate it first."
                             return
         
                         script_name = "zimage_cache_text_encoder_outputs.py"
@@ -1930,7 +2074,7 @@ def construct_ui():
                             cmd.append("--fp8_text_encoder")
         
                         command_str = " ".join(cmd)
-                        yield f"Starting Text Encoder Caching. Please wait for the first log to appear. / Text Encoderのキャッシュを開始します。最初のログが表示されるまでにしばらくかかります。\nCommand: {command_str}\n\n"
+                        yield f"Starting Text Encoder Caching. Please wait for the first log to appear. / Text Encoder縺ｮ繧ｭ繝｣繝・す繝･繧帝幕蟋九＠縺ｾ縺吶よ怙蛻昴・繝ｭ繧ｰ縺瑚｡ｨ遉ｺ縺輔ｌ繧九∪縺ｧ縺ｫ縺励・繧峨￥縺九°繧翫∪縺吶・nCommand: {command_str}\n\n"
         
                         yield from run_command(command_str)
         
@@ -1977,7 +2121,31 @@ def construct_ui():
                     with gr.Group():
                         gr.Markdown(i18n("header_basic_params"))
                         with gr.Row():
+                            training_mode = gr.Dropdown(
+                                label=i18n("lbl_training_mode"),
+                                choices=[TRAINING_MODE_LORA],
+                                value=TRAINING_MODE_LORA,
+                            )
+                            network_type = gr.Dropdown(
+                                label=i18n("lbl_network_type"),
+                                choices=["LoRA", "LoHa", "LoKr"],
+                                value="LoRA",
+                            )
                             network_dim = gr.Number(label=i18n("lbl_dim"), value=4)
+                            network_alpha = gr.Number(label=i18n("lbl_network_alpha"), value=1)
+                        with gr.Row():
+                            network_args = gr.Textbox(
+                                label=i18n("lbl_network_args"),
+                                placeholder="e.g. rank_dropout=0.1 module_dropout=0.1",
+                            )
+                        with gr.Row(visible=False) as finetune_opts_row:
+                            full_bf16 = gr.Checkbox(label=i18n("lbl_full_bf16"), value=False)
+                            fused_backward_pass = gr.Checkbox(label=i18n("lbl_fused_backward_pass"), value=False)
+                            mem_eff_save = gr.Checkbox(label=i18n("lbl_mem_eff_save"), value=False)
+                            block_swap_optimizer_patch_params = gr.Checkbox(
+                                label=i18n("lbl_block_swap_optimizer_patch_params"), value=False
+                            )
+                        with gr.Row():
                             learning_rate = gr.Number(label=i18n("lbl_lr"), value=1e-4)
                             optimizer_type = gr.Dropdown(
                                 label=i18n("lbl_optimizer"),
@@ -2005,7 +2173,6 @@ def construct_ui():
                                 label=i18n("lbl_lr_scheduler_args"), placeholder="e.g. num_cycles=1 power=1.0"
                             )
                         with gr.Row():
-                            network_alpha = gr.Number(label=i18n("lbl_network_alpha"), value=1)
                             lr_warmup_steps = gr.Number(label=i18n("lbl_lr_warmup_steps"), value=0, precision=0)
                             seed = gr.Number(label=i18n("lbl_seed"), value=42, precision=0)
                             max_grad_norm = gr.Number(label=i18n("lbl_max_grad_norm"), value=1.0)
@@ -2083,13 +2250,15 @@ def construct_ui():
                     with gr.Row(elem_classes=["path-row", "env-row"]):
                         output_comfy_lora = gr.Textbox(label=i18n("lbl_output_comfy"), placeholder=i18n("ph_output_comfy"), max_lines=1, scale=8)
                         browse_output_lora = gr.Button(i18n("btn_browse"), scale=1)
+                    with gr.Row():
+                        lokr_rank = gr.Textbox(label=i18n("lbl_lokr_rank"), placeholder="Optional max rank for LoKr QKV conversion")
         
                     convert_btn = gr.Button(i18n("btn_convert"))
                     conversion_log = gr.Textbox(label=i18n("lbl_conversion_log"), lines=5, interactive=False)
         
-        def convert_lora_to_comfy(project_path, input_path, output_path, model, comfy, w, h, batch, vae, te1, te2):
+        def convert_lora_to_comfy(project_path, input_path, output_path, model, comfy, w, h, batch, vae, te1, te2, lokr_rank_val):
             if not project_path:
-                yield "Error: Project directory not set. / プロジェクトディレクトリが設定されていません。"
+                yield "Error: Project directory not set."
                 return
 
             # Save settings
@@ -2105,26 +2274,37 @@ def construct_ui():
                 text_encoder2_path=te2,
                 input_lora_path=input_path,
                 output_comfy_lora_path=output_path,
+                lokr_rank=lokr_rank_val,
             )
 
             if not input_path or not output_path:
-                yield "Error: Input and Output paths must be specified. / 入力・出力パスを指定してください。"
+                yield "Error: Input and Output paths must be specified."
                 return
 
             if not os.path.exists(input_path):
-                yield f"Error: Input file not found at {input_path} / 入力ファイルが見つかりません: {input_path}"
+                yield f"Error: Input file not found at {input_path} / 蜈･蜉帙ヵ繧｡繧､繝ｫ縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ: {input_path}"
                 return
 
             # Script path
             script_path = os.path.join("src", "musubi_tuner", "networks", "convert_z_image_lora_to_comfy.py")
             if not os.path.exists(script_path):
-                yield f"Error: Conversion script not found at {script_path} / 変換スクリプトが見つかりません: {script_path}"
+                yield f"Error: Conversion script not found at {script_path} / 螟画鋤繧ｹ繧ｯ繝ｪ繝励ヨ縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ: {script_path}"
                 return
 
             cmd = [sys.executable, script_path, input_path, output_path]
+            lokr_rank_text = str(lokr_rank_val).strip() if lokr_rank_val is not None else ""
+            if lokr_rank_text:
+                try:
+                    lokr_rank_int = int(lokr_rank_text)
+                    if lokr_rank_int <= 0:
+                        raise ValueError("not positive")
+                except Exception:
+                    yield "Error: LoKr rank must be a positive integer when specified."
+                    return
+                cmd.extend(["--lokr_rank", str(lokr_rank_int)])
 
             command_str = " ".join(cmd)
-            yield f"Starting Conversion. / 変換を開始します。\nCommand: {command_str}\n\n"
+            yield f"Starting Conversion. / 螟画鋤繧帝幕蟋九＠縺ｾ縺吶・nCommand: {command_str}\n\n"
 
             yield from run_command(command_str)
 
@@ -2135,10 +2315,13 @@ def construct_ui():
             vae,
             te1,
             output_nm,
+            training_mode,
+            network_type,
             dim,
             lr,
             optimizer_type,
             optimizer_args,
+            network_args,
             network_alpha,
             lr_warmup_steps,
             seed,
@@ -2152,6 +2335,10 @@ def construct_ui():
             grad_cp,
             fp8_s,
             fp8_l,
+            full_bf16,
+            fused_backward_pass,
+            mem_eff_save,
+            block_swap_optimizer_patch_params,
             add_args,
             should_sample_images,
             sample_every_n,
@@ -2161,39 +2348,69 @@ def construct_ui():
             sample_w_val,
             sample_h_val,
             resume_from,
-            lr_scheduler,  # Added
-            lr_scheduler_args,  # Added
+            lr_scheduler,
+            lr_scheduler_args,
         ):
             import shlex
+
             model = _normalize_model_label(model)
 
+            if training_mode not in [TRAINING_MODE_LORA, TRAINING_MODE_FINETUNE]:
+                training_mode = TRAINING_MODE_LORA
+            if not _is_zimage(model) and training_mode == TRAINING_MODE_FINETUNE:
+                return "Error: Fine-tune mode is available only for Z-Image. / Fine-tune モードは Z-Image のみ対応です。"
+
             if not project_path:
-                return "Error: Project directory not set. / プロジェクトディレクトリが設定されていません。"
+                return "Error: Project directory not set."
             if not dit:
-                return "Error: Base Model / DiT Path not set. / Base Model / DiTのパスが設定されていません。"
+                return "Error: Base Model / DiT Path not set."
             if not os.path.exists(dit):
-                return f"Error: Base Model / DiT file not found at {dit} / Base Model / DiTファイルが見つかりません: {dit}"
+                return f"Error: Base Model / DiT file not found at {dit}"
             if not vae:
-                return "Error: VAE Path not set (configure in Preprocessing). / VAEのパスが設定されていません (Preprocessingで設定してください)。"
+                return "Error: VAE Path not set (configure in Preprocessing)."
             if not te1:
-                return "Error: Text Encoder 1 Path not set (configure in Preprocessing). / Text Encoder 1のパスが設定されていません (Preprocessingで設定してください)。"
+                return "Error: Text Encoder 1 Path not set (configure in Preprocessing)."
 
             dataset_config = os.path.join(project_path, "dataset_config.toml")
             if not os.path.exists(dataset_config):
-                return "Error: dataset_config.toml not found. Please generate it. / dataset_config.toml が見つかりません。生成してください。"
+                return "Error: dataset_config.toml not found. Please generate it."
 
             output_dir = os.path.join(project_path, "models")
             logging_dir = os.path.join(project_path, "logs")
 
-            # Save settings
+            if _is_zimage(model):
+                arch_name = "zimage"
+            elif model == "Qwen-Image":
+                arch_name = "qwen_image"
+            elif model.startswith("Flux.2"):
+                arch_name = "flux_2"
+            else:
+                return f"Error: Unsupported model architecture: {model}"
+
+            if training_mode == TRAINING_MODE_FINETUNE:
+                script_path = os.path.join("src", "musubi_tuner", "zimage_train.py")
+                network_module = None
+            else:
+                script_path = os.path.join("src", "musubi_tuner", f"{arch_name}_train_network.py")
+                if network_type == "LoHa":
+                    network_module = "networks.loha"
+                elif network_type == "LoKr":
+                    network_module = "networks.lokr"
+                else:
+                    network_type = "LoRA"
+                    network_module = f"networks.lora_{arch_name}"
+
             save_project_settings(
                 project_path,
                 dit_path=dit,
                 output_name=output_nm,
+                training_mode=training_mode,
+                network_type=network_type,
                 network_dim=dim,
                 learning_rate=lr,
                 optimizer_type=optimizer_type,
                 optimizer_args=optimizer_args,
+                network_args=network_args,
                 network_alpha=network_alpha,
                 lr_warmup_steps=lr_warmup_steps,
                 seed=seed,
@@ -2207,6 +2424,10 @@ def construct_ui():
                 gradient_checkpointing=grad_cp,
                 fp8_scaled=fp8_s,
                 fp8_llm=fp8_l,
+                full_bf16=full_bf16,
+                fused_backward_pass=fused_backward_pass,
+                mem_eff_save=mem_eff_save,
+                block_swap_optimizer_patch_params=block_swap_optimizer_patch_params,
                 vae_path=vae,
                 text_encoder1_path=te1,
                 additional_args=add_args,
@@ -2222,23 +2443,9 @@ def construct_ui():
                 lr_scheduler_args=lr_scheduler_args,
             )
 
-            # Model specific command modification
-            if _is_zimage(model):
-                arch_name = "zimage"
-            elif model == "Qwen-Image":
-                arch_name = "qwen_image"
-            elif model.startswith("Flux.2"):
-                arch_name = "flux_2"
-
-            # Construct command for cmd /c to run and then pause
-            # We assume 'accelerate' is in the PATH.
-            script_path = os.path.join("src", "musubi_tuner", f"{arch_name}_train_network.py")
-
-            # Inner command list - arguments for accelerate launch
             inner_cmd = [
                 "accelerate",
                 "launch",
-                # accelerate args: we don't configure default_config.yaml, so we need to specify all here
                 "--num_cpu_threads_per_process",
                 "1",
                 "--mixed_precision",
@@ -2246,9 +2453,6 @@ def construct_ui():
                 "--dynamo_backend=no",
                 "--gpu_ids",
                 "all",
-            ]
-
-            inner_cmd.extend([
                 "--machine_rank",
                 "0",
                 "--main_training_function",
@@ -2257,92 +2461,103 @@ def construct_ui():
                 "1",
                 "--num_processes",
                 "1",
-                # script and its args
                 script_path,
-            ])
-            
-            # Flux.2 specific arguments for accelerate/script
-            if model == "Flux.2 Dev":
-                 inner_cmd.extend(["--model_version", "dev"])
-            elif model == "Flux.2 Klein (4B)":
-                 inner_cmd.extend(["--model_version", "klein-4b"])
-            elif model == "Flux.2 Klein Base (4B)":
-                 inner_cmd.extend(["--model_version", "klein-base-4b"])
+            ]
+
+            if training_mode == TRAINING_MODE_LORA:
+                if model == "Flux.2 Dev":
+                    inner_cmd.extend(["--model_version", "dev"])
+                elif model == "Flux.2 Klein (4B)":
+                    inner_cmd.extend(["--model_version", "klein-4b"])
+                elif model == "Flux.2 Klein Base (4B)":
+                    inner_cmd.extend(["--model_version", "klein-base-4b"])
 
             timestep_sampling = "flux2_shift" if model.startswith("Flux.2") else "shift"
 
-            inner_cmd.extend([
-                "--dit",
-                dit,
-                "--vae",
-                vae,
-                "--text_encoder",
-                te1,
-                "--dataset_config",
-                dataset_config,
-                "--output_dir",
-                output_dir,
-                "--output_name",
-                output_nm,
-                "--network_module",
-                f"networks.lora_{arch_name}",
-                "--network_dim",
-                str(int(dim)),
-                "--optimizer_type",
-                optimizer_type,
-                "--network_alpha",
-                str(network_alpha),
-                "--learning_rate",
-                str(lr),
-                "--lr_warmup_steps",
-                str(lr_warmup_steps),
-                "--seed",
-                str(int(seed)),
-                "--max_grad_norm",
-                str(max_grad_norm),
-                "--lr_scheduler",
-                lr_scheduler,
-                "--max_train_epochs",
-                str(int(epochs)),
-                "--save_every_n_epochs",
-                str(int(save_n)),
-                "--timestep_sampling",
-                timestep_sampling,
-                "--weighting_scheme",
-                "none",
-                "--discrete_flow_shift",
-                str(flow_shift),
-                "--max_data_loader_n_workers",
-                "2",
-                "--persistent_data_loader_workers",
-                "--logging_dir",
-                logging_dir,
-                "--log_with",
-                "tensorboard",
-            ])
+            inner_cmd.extend(
+                [
+                    "--dit",
+                    dit,
+                    "--vae",
+                    vae,
+                    "--text_encoder",
+                    te1,
+                    "--dataset_config",
+                    dataset_config,
+                    "--output_dir",
+                    output_dir,
+                    "--output_name",
+                    output_nm,
+                    "--optimizer_type",
+                    optimizer_type,
+                    "--learning_rate",
+                    str(lr),
+                    "--lr_warmup_steps",
+                    str(lr_warmup_steps),
+                    "--seed",
+                    str(int(seed)),
+                    "--max_grad_norm",
+                    str(max_grad_norm),
+                    "--lr_scheduler",
+                    lr_scheduler,
+                    "--max_train_epochs",
+                    str(int(epochs)),
+                    "--save_every_n_epochs",
+                    str(int(save_n)),
+                    "--timestep_sampling",
+                    timestep_sampling,
+                    "--weighting_scheme",
+                    "none",
+                    "--discrete_flow_shift",
+                    str(flow_shift),
+                    "--max_data_loader_n_workers",
+                    "2",
+                    "--persistent_data_loader_workers",
+                    "--logging_dir",
+                    logging_dir,
+                    "--log_with",
+                    "tensorboard",
+                ]
+            )
+
+            if training_mode == TRAINING_MODE_LORA:
+                inner_cmd.extend(
+                    [
+                        "--network_module",
+                        network_module,
+                        "--network_dim",
+                        str(int(dim)),
+                        "--network_alpha",
+                        str(network_alpha),
+                    ]
+                )
 
             if optimizer_args and optimizer_args.strip():
                 try:
                     inner_cmd.append("--optimizer_args")
                     inner_cmd.extend(shlex.split(optimizer_args))
                 except Exception as e:
-                    return f"Error parsing optimizer args / オプティマイザ引数の解析に失敗しました: {str(e)}"
+                    return f"Error parsing optimizer args: {str(e)}"
 
             if lr_scheduler_args and lr_scheduler_args.strip():
                 try:
                     inner_cmd.append("--lr_scheduler_args")
                     inner_cmd.extend(shlex.split(lr_scheduler_args))
                 except Exception as e:
-                    return f"Error parsing scheduler args / スケジューラ引数の解析に失敗しました: {str(e)}"
+                    return f"Error parsing scheduler args: {str(e)}"
 
-            # Sample image generation options
+            if training_mode == TRAINING_MODE_LORA and network_args and network_args.strip():
+                try:
+                    inner_cmd.append("--network_args")
+                    inner_cmd.extend(shlex.split(network_args))
+                except Exception as e:
+                    return f"Error parsing network args: {str(e)}"
+
             if should_sample_images:
                 sample_prompt_path = os.path.join(project_path, "sample_prompt.txt")
                 templates = {
-                    # prompt, negative prompt, width, height, flow shift, steps, CFG scale, seed
                     "Qwen-Image": "{prompt} --n {neg} --w {w} --h {h} --fs 2.2 --s 20 --l 4.0 --d 1234",
                     "Z-Image": "{prompt} --n {neg} --w {w} --h {h} --fs 3.0 --s 20 --l 5.0 --d 1234",
-                    # Flux.2 uses guidance scale; distilled klein uses fewer steps
                     "Flux.2 Dev": "{prompt} --n {neg} --w {w} --h {h} --s 50 --g 4.0 --d 1234",
                     "Flux.2 Klein (4B)": "{prompt} --n {neg} --w {w} --h {h} --s 4 --g 1.0 --d 1234",
                     "Flux.2 Klein Base (4B)": "{prompt} --n {neg} --w {w} --h {h} --s 50 --g 4.0 --d 1234",
@@ -2354,14 +2569,14 @@ def construct_ui():
                     w_int = int(sample_w_val)
                     h_int = int(sample_h_val)
                 except Exception:
-                    return "Error: Sample width/height must be integers. / サンプル画像の幅と高さは整数で指定してください。"
+                    return "Error: Sample width/height must be integers."
 
                 line = template.format(prompt=prompt_str, neg=neg_str, w=w_int, h=h_int)
                 try:
                     with open(sample_prompt_path, "w", encoding="utf-8") as f:
                         f.write(line + "\n")
                 except Exception as e:
-                    return f"Error writing sample_prompt.txt / sample_prompt.txt の作成に失敗しました: {str(e)}"
+                    return f"Error writing sample_prompt.txt: {str(e)}"
 
                 inner_cmd.extend(
                     [
@@ -2401,39 +2616,35 @@ def construct_ui():
             inner_cmd.append("--sdpa")
             inner_cmd.append("--split_attn")
 
-            # Model specific command modification
-            if _is_zimage(model):
-                pass
-            elif model == "Qwen-Image":
-                pass
+            if training_mode == TRAINING_MODE_FINETUNE:
+                if full_bf16:
+                    inner_cmd.append("--full_bf16")
+                if fused_backward_pass:
+                    inner_cmd.append("--fused_backward_pass")
+                if mem_eff_save:
+                    inner_cmd.append("--mem_eff_save")
+                if block_swap_optimizer_patch_params:
+                    inner_cmd.append("--block_swap_optimizer_patch_params")
 
-            # Resume from checkpoint
             if resume_from and resume_from.strip():
                 inner_cmd.extend(["--resume", resume_from.strip()])
 
-            # Parse and append additional args
             if add_args:
                 try:
                     split_args = shlex.split(add_args)
                     inner_cmd.extend(split_args)
                 except Exception as e:
-                    return f"Error parsing additional arguments / 追加引数の解析に失敗しました: {str(e)}"
+                    return f"Error parsing additional arguments: {str(e)}"
 
-            # Construct the full command string for cmd /c
-            # list2cmdline will quote arguments as needed for Windows
             inner_cmd_str = subprocess.list2cmdline(inner_cmd)
-
-            # Chain commands: Run training -> echo message -> pause >nul (hides default message)
             final_cmd_str = f"{inner_cmd_str} & echo. & echo Training finished. Press any key to close this window... & pause >nul"
 
             try:
-                # Open in new console window
                 flags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
-                # Pass explicit 'cmd', '/c', string to ensure proper execution
                 subprocess.Popen(["cmd", "/c", final_cmd_str], creationflags=flags, shell=False)
-                return f"Training started in a new window! / 譁ｰ縺励＞繧ｦ繧｣繝ｳ繝峨え縺ｧ蟄ｦ鄙偵′髢句ｧ九＆繧後∪縺励◆。\nCommand: {inner_cmd_str}"
+                return f"Training started in a new window!\nCommand: {inner_cmd_str}"
             except Exception as e:
-                return f"Error starting training / 蟄ｦ鄙偵・髢句ｧ九↓螟ｱ謨励＠縺ｾ縺励◆: {str(e)}"
+                return f"Error starting training: {str(e)}"
 
         def update_model_info(model):
             if _is_zimage(model):
@@ -2443,6 +2654,31 @@ def construct_ui():
             elif model.startswith("Flux.2"):
                 return i18n("desc_training_flux2")
             return ""
+
+        def _mode_visibility_updates(mode):
+            is_finetune = mode == TRAINING_MODE_FINETUNE
+            return [
+                gr.update(visible=not is_finetune),  # network_type
+                gr.update(visible=not is_finetune),  # network_dim
+                gr.update(visible=not is_finetune),  # network_alpha
+                gr.update(visible=not is_finetune),  # network_args
+                gr.update(visible=is_finetune),  # fine-tune options row
+            ]
+
+        def update_training_mode_visibility(mode):
+            if mode not in [TRAINING_MODE_LORA, TRAINING_MODE_FINETUNE]:
+                mode = TRAINING_MODE_LORA
+            return _mode_visibility_updates(mode)
+
+        def update_training_mode_options(model, current_mode):
+            model = _normalize_model_label(model)
+            if _is_zimage(model):
+                choices = [TRAINING_MODE_LORA, TRAINING_MODE_FINETUNE]
+            else:
+                choices = [TRAINING_MODE_LORA]
+
+            selected_mode = current_mode if current_mode in choices else TRAINING_MODE_LORA
+            return [gr.update(choices=choices, value=selected_mode), *_mode_visibility_updates(selected_mode)]
 
         for name, component in [
             ("preset_name", preset_name),
@@ -2479,10 +2715,13 @@ def construct_ui():
             ("training_model_info", training_model_info),
             ("dit_path", dit_path),
             ("output_name", output_name),
+            ("training_mode", training_mode),
+            ("network_type", network_type),
             ("network_dim", network_dim),
             ("learning_rate", learning_rate),
             ("optimizer_type", optimizer_type),
             ("optimizer_args", optimizer_args),
+            ("network_args", network_args),
             ("lr_scheduler", lr_scheduler),
             ("lr_scheduler_args", lr_scheduler_args),
             ("network_alpha", network_alpha),
@@ -2498,6 +2737,10 @@ def construct_ui():
             ("gradient_checkpointing", gradient_checkpointing),
             ("fp8_scaled", fp8_scaled),
             ("fp8_llm", fp8_llm),
+            ("full_bf16", full_bf16),
+            ("fused_backward_pass", fused_backward_pass),
+            ("mem_eff_save", mem_eff_save),
+            ("block_swap_optimizer_patch_params", block_swap_optimizer_patch_params),
             ("vram_estimate", vram_estimate),
             ("sample_images", sample_images),
             ("sample_prompt", sample_prompt),
@@ -2511,18 +2754,34 @@ def construct_ui():
             ("training_status", training_status),
             ("input_lora", input_lora),
             ("output_comfy_lora", output_comfy_lora),
+            ("lokr_rank", lokr_rank),
             ("conversion_log", conversion_log),
         ]:
             register(name, component)
 
         # Event wiring moved to end to prevent UnboundLocalError
-        init_btn.click(
+        init_evt = init_btn.click(
             fn=init_project,
             inputs=[project_dir],
             outputs=[project_status, *components_for(INIT_OUTPUT_KEYS)],
         )
+        init_evt.then(
+            fn=update_training_mode_options,
+            inputs=[model_arch, training_mode],
+            outputs=[training_mode, network_type, network_dim, network_alpha, network_args, finetune_opts_row],
+        )
 
         model_arch.change(fn=update_model_info, inputs=[model_arch], outputs=[training_model_info])
+        model_arch.change(
+            fn=update_training_mode_options,
+            inputs=[model_arch, training_mode],
+            outputs=[training_mode, network_type, network_dim, network_alpha, network_args, finetune_opts_row],
+        )
+        training_mode.change(
+            fn=update_training_mode_visibility,
+            inputs=[training_mode],
+            outputs=[network_type, network_dim, network_alpha, network_args, finetune_opts_row],
+        )
 
         gen_toml_btn.click(
             fn=generate_config,
@@ -2553,10 +2812,15 @@ def construct_ui():
 
         validate_models_btn.click(fn=validate_models_dir, inputs=[comfy_models_dir], outputs=[models_status])
 
-        quick_setup_btn.click(
+        quick_setup_evt = quick_setup_btn.click(
             fn=quick_setup,
             inputs=[project_dir, model_arch, vram_size, comfy_models_dir],
             outputs=components_for(QUICK_SETUP_OUTPUT_KEYS),
+        )
+        quick_setup_evt.then(
+            fn=update_training_mode_options,
+            inputs=[model_arch, training_mode],
+            outputs=[training_mode, network_type, network_dim, network_alpha, network_args, finetune_opts_row],
         )
 
         check_missing_btn.click(
@@ -2608,10 +2872,15 @@ def construct_ui():
             fn=set_post_processing_defaults, inputs=[project_dir, output_name], outputs=[input_lora, output_comfy_lora]
         )
 
-        set_training_defaults_btn.click(
+        set_training_defaults_evt = set_training_defaults_btn.click(
             fn=set_training_defaults,
             inputs=[project_dir, comfy_models_dir, model_arch, vram_size],
             outputs=components_for(TRAINING_DEFAULT_KEYS),
+        )
+        set_training_defaults_evt.then(
+            fn=update_training_mode_options,
+            inputs=[model_arch, training_mode],
+            outputs=[training_mode, network_type, network_dim, network_alpha, network_args, finetune_opts_row],
         )
 
         est_vram_btn.click(
@@ -2674,10 +2943,13 @@ def construct_ui():
                 vae_path,
                 text_encoder1_path,
                 output_name,
+                training_mode,
+                network_type,
                 network_dim,
                 learning_rate,
                 optimizer_type,
                 optimizer_args,
+                network_args,
                 network_alpha,
                 lr_warmup_steps,
                 seed,
@@ -2691,6 +2963,10 @@ def construct_ui():
                 gradient_checkpointing,
                 fp8_scaled,
                 fp8_llm,
+                full_bf16,
+                fused_backward_pass,
+                mem_eff_save,
+                block_swap_optimizer_patch_params,
                 additional_args,
                 sample_images,
                 sample_every_n,
@@ -2717,10 +2993,15 @@ def construct_ui():
         # Chain save with refresh list
         save_preset_btn.click(fn=refresh_preset_dropdown, outputs=[load_preset_dd])
 
-        load_preset_btn.click(
+        load_preset_evt = load_preset_btn.click(
              fn=load_preset,
              inputs=[load_preset_dd, preset_apply_paths],
              outputs=[preset_status, *components_for(PRESET_OUTPUT_COMPONENT_KEYS)]
+        )
+        load_preset_evt.then(
+            fn=update_training_mode_options,
+            inputs=[model_arch, training_mode],
+            outputs=[training_mode, network_type, network_dim, network_alpha, network_args, finetune_opts_row],
         )
         
         refresh_preset_btn.click(fn=refresh_preset_dropdown, outputs=[load_preset_dd])
@@ -2742,6 +3023,7 @@ def construct_ui():
                 vae_path,
                 text_encoder1_path,
                 text_encoder2_path,
+                lokr_rank,
             ],
             outputs=[conversion_log],
         )
@@ -2751,9 +3033,12 @@ def construct_ui():
 
 if __name__ == "__main__":
     demo = construct_ui()
-    launch_kwargs = {"i18n": i18n}
+    launch_kwargs = {}
+    if LAUNCH_SUPPORTS_I18N:
+        launch_kwargs["i18n"] = i18n
     if LAUNCH_SUPPORTS_THEME:
         launch_kwargs["theme"] = gr.themes.Soft()
     if LAUNCH_SUPPORTS_CSS:
         launch_kwargs["css"] = APP_CSS
     demo.launch(**launch_kwargs)
+

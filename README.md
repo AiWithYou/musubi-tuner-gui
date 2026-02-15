@@ -109,3 +109,17 @@ The first launch may take time due to dependency resolution.
 
 ## References
 - [GUI User Guide (English)](./gui.md)
+
+## 2026-02-15 Update Notes
+- Training now supports LoRA/LoHa/LoKr in one mode.
+- Added Training Mode selector:
+  - LoRA/LoHa/LoKr
+  - Fine-tune (shown only when Model Architecture = Z-Image)
+- Added Network Type (LoRA, LoHa, LoKr) and Network Args (optional string).
+- In Fine-tune mode, LoRA network fields are hidden and these options are shown:
+  - --full_bf16
+  - --fused_backward_pass
+  - --mem_eff_save
+  - --block_swap_optimizer_patch_params
+- Post-Processing now has optional LoKr Rank (--lokr_rank <positive_int>).
+- musubi_project.toml and preset JSON support new keys for the fields above. Older files remain loadable.
